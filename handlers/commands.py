@@ -10,64 +10,65 @@ def is_admin(user_id: int) -> bool:
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("Uzr, sizda access mavjud emas.")
-        return
-
     text = (
-        "🤖 DUNYABUNYA AI TARGET ASSISTANT\n\n"
-        "Assalomu alaykum, Abdulloh 👋\n\n"
-        "Men sizning shaxsiy AI marketing va target assistantingizman.\n\n"
-        "Men quyidagilarni qila olaman:\n\n"
-        "📊 Meta Ads analiz\n"
+        "🤖 *DUNYABUNYA AI TARGET ASSISTANT*\n\n"
+        "Assalomu alaykum 👋\n\n"
+        "Bu bot Dunyabunya uchun yaratilgan AI marketing va target assistant hisoblanadi.\n\n"
+        "Bot imkoniyatlari:\n"
+        "📊 Meta Ads hisobotlari\n"
         "📈 CPL / CTR / CPM monitoring\n"
-        "🎯 Target tavsiyalar\n"
+        "🎯 Target analiz va tavsiyalar\n"
         "🎬 Creative va reels ssenariylar\n"
-        "🧠 AI marketing analiz\n"
-        "💡 Scale va optimization tavsiyalar\n"
-        "⚠️ Avtomatik ogohlantirishlar\n\n"
+        "🧠 AI marketing assistant\n"
+        "⚠️ Reklama monitoringi\n"
+        "💡 Marketing tavsiyalari\n\n"
         "Buyruqlarni ko‘rish:\n"
-        "👉 /help"
+        "👉 /help\n\n"
+        "⚠️ *Eslatma:*\n"
+        "Ba’zi professional funksiyalar faqat admin uchun mavjud."
     )
-    await message.answer(text)
+    await message.answer(text, parse_mode="Markdown")
 
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
-    if not is_admin(message.from_user.id):
-        await message.answer("Uzr, sizda access mavjud emas.")
-        return
-
-    text = (
-        "📌 TARGET AI ASSISTANT BUYRUQLARI\n\n"
-        "📊 HISOBOTLAR\n"
-        "/today — bugungi hisobot\n"
-        "/yesterday — kechagi hisobot\n"
-        "/week — haftalik hisobot\n"
-        "/month — oylik hisobot\n"
-        "/campaigns — kampaniyalar\n"
-        "/analyze — AI analiz\n\n"
-        "🤖 AI ASSISTANT\n\n"
-        "* nega CPL oshdi\n"
-        "* creative yozib ber\n"
-        "* reels ssenariy ber\n"
-        "* target setting ber\n"
-        "* audience ber\n"
-        "* budgetni oshiraymi\n"
-        "* qaysi kampaniya yaxshi\n"
-        "* lead sifati qanday\n\n"
-        "🏗 Qurilish sohasi:\n\n"
-        "* gipsokarton\n"
-        "* profil\n"
-        "* linoleum\n"
-        "* oboy\n"
-        "* kafel\n"
-        "* santexnika\n"
-        "* bazalt\n"
-        "* penoplex\n\n"
-        "📞 Bog‘lanish:\n"
-        "+998 (50) 999-97-33"
-    )
-    await message.answer(text)
+    if is_admin(message.from_user.id):
+        text = (
+            "📌 *BOT YORDAMI*\n\n"
+            "📊 *HISOBOTLAR*\n"
+            "/today — bugungi hisobot\n"
+            "/yesterday — kechagi hisobot\n"
+            "/week — haftalik hisobot\n"
+            "/month — oylik hisobot\n"
+            "/campaigns — kampaniyalar\n"
+            "/analyze — AI analiz\n\n"
+            "🤖 *AI ASSISTANT MISOLLARI*\n\n"
+            "• nega CPL oshdi\n"
+            "• creative yozib ber\n"
+            "• reels ssenariy ber\n"
+            "• target setting ber\n"
+            "• audience ber\n"
+            "• budgetni oshiraymi\n"
+            "• qaysi kampaniya yaxshi\n"
+            "• qaysi kampaniya yomon\n"
+            "• lead sifati qanday\n"
+            "• CPM nega oshdi\n"
+            "• CTR nega tushdi\n"
+            "• qaysi reklamani o‘chirish kerak\n\n"
+            "📞 *Bog‘lanish:*\n"
+            "+998 (50) 999-97-33"
+        )
+    else:
+        text = (
+            "📌 *BOT YORDAMI*\n\n"
+            "🤖 *AI ASSISTANT MISOLLARI*\n\n"
+            "• creative yozib ber\n"
+            "• reels ssenariy ber\n"
+            "• target setting ber\n"
+            "• audience ber\n\n"
+            "📞 *Bog‘lanish:*\n"
+            "+998 (50) 999-97-33"
+        )
+    await message.answer(text, parse_mode="Markdown")
 
 @router.message(Command("today"))
 async def cmd_today(message: types.Message):

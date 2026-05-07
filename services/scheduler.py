@@ -1,28 +1,39 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
-from config.settings import GROUP_ID
+from config.settings import GROUP_ID, TIMEZONE, REPORT_HOURS
 from services.report_builder import build_target_report
 from utils.logger import logger
 
+
 async def send_scheduled_report(bot: Bot):
+    """Avtomatik hisobot guruhga yuboradi."""
     if not GROUP_ID:
-        logger.warning("GROUP_ID topilmadi. Avtomatik hisobot yuborilmadi.")
+        logger.warning("GROUP_ID sozlanmagan. Avtomatik hisobot yuborilmadi.")
         return
-        
+
     try:
         report = await build_target_report("today")
         await bot.send_message(chat_id=GROUP_ID, text=report)
-        logger.info("Avtomatik hisobot guruhga yuborildi.")
+        logger.info("✅ Avtomatik hisobot guruhga yuborildi.")
     except Exception as e:
-        logger.error(f"Avtomatik hisobot yuborishda xatolik: {e}")
+        logger.error(f"❌ Avtomatik hisobot yuborishda xatolik: {e}")
+
 
 def setup_scheduler(bot: Bot):
-    scheduler = AsyncIOScheduler(timezone="Asia/Tashkent")
-    
-    # Har kuni 09:00, 15:00, 21:00 da
-    scheduler.add_job(send_scheduled_report, 'cron', hour=9, minute=0, args=[bot])
-    scheduler.add_job(send_scheduled_report, 'cron', hour=15, minute=0, args=[bot])
-    scheduler.add_job(send_scheduled_report, 'cron', hour=21, minute=0, args=[bot])
-    
+    """Scheduler ni sozlash — har kuni belgilangan vaqtlarda avtomatik hisobot."""
+    scheduler = AsyncIOScheduler(timezone=TIMEZONE)
+
+    for hour in REPORT_HOURS:
+        scheduler.add_job(
+            send_scheduled_report,
+            "cron",
+            hour=hour,
+            minute=0,
+            args=[bot],
+            id=f"daily_report_{hour}",
+            replace_existing=True,
+        )
+
     scheduler.start()
-    logger.info("Scheduler ishga tushirildi (09:00, 15:00, 21:00)")
+    hours_str = ", ".join(f"{h}:00" for h in REPORT_HOURS)
+    logger.info(f"📅 Scheduler ishga tushdi ({hours_str} {TIMEZONE})")

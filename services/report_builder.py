@@ -1,33 +1,43 @@
-from services.meta_ads import get_ad_data
-from services.ai_analyzer import analyze_data
+from datetime import datetime
+from config.settings import META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, OPENAI_API_KEY
+from services.meta_ads_service import MetaAdsService
+from services.ai_analyzer import AIAnalyzer
 
-async def build_report(period: str) -> str:
+async def build_target_report(period: str) -> str:
     """
-    Hisobot matnini tayyorlaydi
+    Hisobot shakllantiruvchi fuksiya
+    period: today, yesterday, week, month
     """
-    data = await get_ad_data(period)
+    meta_service = MetaAdsService(META_ACCESS_TOKEN, META_AD_ACCOUNT_ID)
+    ai_service = AIAnalyzer(OPENAI_API_KEY)
+
+    data = await meta_service.get_insights(period)
     if not data:
-        return "Ma'lumot topilmadi."
-        
-    analysis = await analyze_data(data)
+        return f"Ma'lumot topilmadi ({period})"
+
+    analysis = await ai_service.analyze_metrics(data)
     
-    title = "Bugungi" if period == "today" else "Haftalik"
-    
-    # Raqamlarni probel bilan formatlash (masalan, 41200 -> 41 200)
+    # Raqamlarni chiroyli formatlash
     impressions = f"{data['impressions']:,}".replace(",", " ")
     reach = f"{data['reach']:,}".replace(",", " ")
     
-    report = (
-        f"📊 {title} Target Hisoboti\n\n"
-        f"💰 Xarajat: ${data['spend']:.2f}\n"
-        f"📩 Leadlar: {data['leads']} ta\n"
-        f"🎯 CPL: ${data['cpl']:.2f}\n"
-        f"👁 Ko‘rishlar: {impressions}\n"
-        f"📍 Reach: {reach}\n"
-        f"📈 CTR: {data['ctr']}%\n"
-        f"🖱 CPC: ${data['cpc']:.2f}\n\n"
-        f"🤖 AI tahlil:\n"
-        f"{analysis}"
-    )
+    date_str = datetime.now().strftime("%d.%m.%Y")
     
+    report = (
+        f"📊 TARGET HISOBOTI ({period.upper()})\n\n"
+        f"📅 Sana: {date_str}\n\n"
+        f"💰 Xarajat: ${data['spend']:.2f}\n"
+        f"📩 Leadlar: {data['leads']}\n"
+        f"✉️ Xabarlar: {data['messages']}\n"
+        f"🎯 CPL: ${data['cpl']:.2f}\n"
+        f"📈 CTR: {data['ctr']}%\n"
+        f"🖱 CPC: ${data['cpc']:.2f}\n"
+        f"📉 CPM: ${data['cpm']:.2f}\n"
+        f"👁 Impressions: {impressions}\n"
+        f"📍 Reach: {reach}\n"
+        f"🔄 Frequency: {data['frequency']}\n\n"
+        f"🔥 Eng yaxshi kampaniya:\n{data['best_campaign']}\n\n"
+        f"⚠️ Eng yomon kampaniya:\n{data['worst_campaign']}\n\n"
+        f"🤖 AI Tahlil:\n{analysis}"
+    )
     return report

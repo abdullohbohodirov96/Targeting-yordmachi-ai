@@ -2,7 +2,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
 from config.settings import GROUP_ID, TIMEZONE, REPORT_HOURS
 from services.report_builder import build_target_report
-from services.sheets_service import SheetsService
 from utils.logger import logger
 
 
@@ -20,15 +19,6 @@ async def send_scheduled_report(bot: Bot):
     except Exception as e:
         logger.error(f"❌ Avtomatik hisobot yuborishda xatolik: {e}")
 
-async def sync_daily_sheets():
-    """Har kuni kun oxirida ma'lumotlarni Sheetsga yozib qo'yish."""
-    try:
-        sheets = SheetsService()
-        await sheets.sync_today_data()
-        logger.info("✅ Google Sheets data saqlandi.")
-    except Exception as e:
-        logger.error(f"❌ Sheets sync xatolik: {e}")
-
 
 def setup_scheduler(bot: Bot):
     """Scheduler ni sozlash — har kuni belgilangan vaqtlarda avtomatik hisobot."""
@@ -45,16 +35,6 @@ def setup_scheduler(bot: Bot):
             id=f"daily_report_{hour}",
             replace_existing=True,
         )
-        
-    # Har kuni kechasi 23:50 da sheetsga log qilish
-    scheduler.add_job(
-        sync_daily_sheets,
-        "cron",
-        hour=23,
-        minute=50,
-        id="sheets_sync",
-        replace_existing=True,
-    )
 
     scheduler.start()
     hours_str = ", ".join(f"{h}:00" for h in REPORT_HOURS)

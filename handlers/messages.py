@@ -1,7 +1,6 @@
 from aiogram import Router, F, types
 from services.ai_analyzer import AIAnalyzer
 from services.meta_ads_service import MetaAdsService
-from services.sheets_service import SheetsService
 from config.settings import ADMIN_ID
 from utils.logger import logger
 
@@ -48,17 +47,10 @@ async def handle_text_questions(message: types.Message):
     try:
         meta = MetaAdsService()
         ai = AIAnalyzer()
-        sheets = SheetsService()
 
         data = await meta.get_account_insights("today")
         campaigns = await meta.get_campaign_insights("today")
-        
-        # Trend / History o'qish (local cache orqali yesterday)
-        history = sheets.get_historical_data()
-        yesterday_data = None
-        if len(history) > 0:
-            # Eng oxirgisini yesterday deb olamiz yoki aynan sanaga tekshiramiz
-            yesterday_data = history[-1]
+        yesterday_data = await meta.get_account_insights("yesterday")
             
         answer = await ai.answer_question(message.text, data, campaigns, yesterday_data)
         await message.reply(f"🤖 Assistant:\n\n{answer}")

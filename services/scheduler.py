@@ -12,7 +12,8 @@ async def send_scheduled_report(bot: Bot):
         return
 
     try:
-        report = await build_target_report("today")
+        # Tahlilsiz (AI siz) sof hisobot tashlaymiz va faqat "yesterday"
+        report = await build_target_report("yesterday", include_analysis=False)
         await bot.send_message(chat_id=GROUP_ID, text=report)
         logger.info("✅ Avtomatik hisobot guruhga yuborildi.")
     except Exception as e:

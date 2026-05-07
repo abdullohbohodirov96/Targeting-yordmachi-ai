@@ -1,5 +1,4 @@
 import aiohttp
-import random
 from datetime import datetime, timedelta
 from config.settings import META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, META_BASE_URL
 from utils.logger import logger
@@ -7,8 +6,8 @@ from utils.logger import logger
 
 class MetaAdsService:
     """
-    Meta Marketing API bilan ishlash uchun production service.
-    Agar API ulanmagan yoki xato bersa, fallback fake data qaytaradi.
+    Meta Marketing API bilan ishlash uchun xizmat.
+    Faqatgina REAL ma'lumotlarni qaytaradi. Fake ma'lumotlar olib tashlandi.
     """
 
     def __init__(self):
@@ -16,108 +15,94 @@ class MetaAdsService:
         self.account_id = META_AD_ACCOUNT_ID
         self.base_url = META_BASE_URL
 
-    def _get_date_range(self, period: str) -> dict:
-        """Davr bo'yicha sana oralig'ini qaytaradi."""
-        today = datetime.now()
-        if period == "today":
-            since = today.strftime("%Y-%m-%d")
-            until = since
-        elif period == "yesterday":
-            yesterday = today - timedelta(days=1)
-            since = yesterday.strftime("%Y-%m-%d")
-            until = since
-        elif period == "week":
-            since = (today - timedelta(days=7)).strftime("%Y-%m-%d")
-            until = today.strftime("%Y-%m-%d")
-        elif period == "month":
-            since = (today - timedelta(days=30)).strftime("%Y-%m-%d")
-            until = today.strftime("%Y-%m-%d")
-        else:
-            since = today.strftime("%Y-%m-%d")
-            until = since
-        return {"since": since, "until": until}
+        if not self.access_token or not self.account_id:
+            raise ValueError("META_ACCESS_TOKEN yoki META_AD_ACCOUNT_ID topilmadi! Iltimos, Railway Variables'ga qo'shing.")
+
+    def _get_date_preset(self, period: str) -> str:
+        """Davr bo'yicha Meta API uchun date_preset ni qaytaradi."""
+        mapping = {
+            "today": "today",
+            "yesterday": "yesterday",
+            "week": "this_week", # yoki last_7d
+            "month": "this_month" # yoki last_30d
+        }
+        return mapping.get(period, "today")
 
     async def get_account_insights(self, period: str) -> dict:
         """
         Meta Ads API dan umumiy account statistikasini oladi.
-        Xatolik bo'lsa fallback data qaytaradi.
         """
-        if not self.access_token or not self.account_id:
-            logger.warning("Meta API credentials topilmadi. Fake data ishlatiladi.")
-            return self._get_fallback_data(period)
+        date_preset = self._get_date_preset(period)
+        url = f"{self.base_url}/{self.account_id}/insights"
+        params = {
+            "access_token": self.access_token,
+            "fields": "spend,impressions,reach,cpc,cpm,ctr,frequency,actions",
+            "date_preset": date_preset,
+            "level": "account",
+        }
 
-        try:
-            date_range = self._get_date_range(period)
-            url = f"{self.base_url}/{self.account_id}/insights"
-            params = {
-                "access_token": self.access_token,
-                "fields": "spend,impressions,reach,cpc,cpm,ctr,frequency,actions",
-                "time_range": f'{{"since":"{date_range["since"]}","until":"{date_range["until"]}"}}',
-                "level": "account",
-            }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"Meta API error ({resp.status}): {error_text}")
+                    raise RuntimeError(f"Meta API Xatosi: {error_text}")
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        logger.error(f"Meta API error ({resp.status}): {error_text}")
-                        return self._get_fallback_data(period)
+                result = await resp.json()
+                data_list = result.get("data", [])
+                if not data_list:
+                    # Agar ma'lumot umuman bo'lmasa 0 qaytaramiz
+                    return self._empty_account_data()
 
-                    result = await resp.json()
-                    data_list = result.get("data", [])
-                    if not data_list:
-                        logger.warning(f"Meta API bo'sh data qaytardi ({period}). Fallback ishlatiladi.")
-                        return self._get_fallback_data(period)
+                raw = data_list[0]
+                return self._parse_account_data(raw)
 
-                    raw = data_list[0]
-                    return self._parse_account_data(raw)
-
-        except aiohttp.ClientError as e:
-            logger.error(f"Meta API connection error: {e}")
-            return self._get_fallback_data(period)
-        except Exception as e:
-            logger.error(f"Meta API xatolik: {e}")
-            return self._get_fallback_data(period)
 
     async def get_campaign_insights(self, period: str) -> list:
         """
         Har bir kampaniya bo'yicha alohida ma'lumot oladi.
         """
-        if not self.access_token or not self.account_id:
-            logger.warning("Meta API credentials topilmadi. Fake campaign data ishlatiladi.")
-            return self._get_fallback_campaigns()
+        date_preset = self._get_date_preset(period)
+        url = f"{self.base_url}/{self.account_id}/insights"
+        params = {
+            "access_token": self.access_token,
+            "fields": "campaign_name,spend,impressions,reach,cpc,cpm,ctr,frequency,actions",
+            "date_preset": date_preset,
+            "level": "campaign",
+            "limit": 50,
+        }
 
-        try:
-            date_range = self._get_date_range(period)
-            url = f"{self.base_url}/{self.account_id}/insights"
-            params = {
-                "access_token": self.access_token,
-                "fields": "campaign_name,spend,impressions,reach,cpc,cpm,ctr,frequency,actions",
-                "time_range": f'{{"since":"{date_range["since"]}","until":"{date_range["until"]}"}}',
-                "level": "campaign",
-                "limit": 50,
-            }
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                if resp.status != 200:
+                    error_text = await resp.text()
+                    logger.error(f"Meta Campaign API error ({resp.status}): {error_text}")
+                    raise RuntimeError(f"Meta API Xatosi: {error_text}")
 
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                    if resp.status != 200:
-                        error_text = await resp.text()
-                        logger.error(f"Meta Campaign API error ({resp.status}): {error_text}")
-                        return self._get_fallback_campaigns()
+                result = await resp.json()
+                data_list = result.get("data", [])
+                if not data_list:
+                    return []
 
-                    result = await resp.json()
-                    data_list = result.get("data", [])
-                    if not data_list:
-                        return self._get_fallback_campaigns()
+                campaigns = []
+                for raw in data_list:
+                    campaigns.append(self._parse_campaign_data(raw))
+                return campaigns
 
-                    campaigns = []
-                    for raw in data_list:
-                        campaigns.append(self._parse_campaign_data(raw))
-                    return campaigns
-
-        except Exception as e:
-            logger.error(f"Meta Campaign API xatolik: {e}")
-            return self._get_fallback_campaigns()
+    def _empty_account_data(self) -> dict:
+        return {
+            "spend": 0.0,
+            "leads": 0,
+            "messages": 0,
+            "cpl": 0.0,
+            "cpc": 0.0,
+            "cpm": 0.0,
+            "ctr": 0.0,
+            "reach": 0,
+            "impressions": 0,
+            "frequency": 0.0,
+            "is_real_data": True,
+        }
 
     def _parse_account_data(self, raw: dict) -> dict:
         """Meta API dan kelgan raw datani parse qiladi."""
@@ -129,18 +114,20 @@ class MetaAdsService:
         ctr = float(raw.get("ctr", 0))
         frequency = float(raw.get("frequency", 0))
 
-        # actions dan lead va message olish
         leads = 0
         messages = 0
         actions = raw.get("actions", [])
+        
+        # Actions ro'yxatini tekshirish
         for action in actions:
             action_type = action.get("action_type", "")
-            value = int(action.get("value", 0))
+            value = float(action.get("value", 0))
             if action_type == "lead":
-                leads = value
+                leads += int(value)
             elif action_type in ("onsite_conversion.messaging_conversation_started_7d",
-                                  "onsite_conversion.messaging_first_reply"):
-                messages += value
+                                  "onsite_conversion.messaging_first_reply",
+                                  "messages"):
+                messages += int(value)
 
         cpl = round(spend / leads, 2) if leads > 0 else 0
 
@@ -163,48 +150,3 @@ class MetaAdsService:
         data = self._parse_account_data(raw)
         data["campaign_name"] = raw.get("campaign_name", "Noma'lum")
         return data
-
-    def _get_fallback_data(self, period: str) -> dict:
-        """Agar Meta API ishlamasa, test data qaytaradi."""
-        logger.info(f"Fallback (fake) data ishlatilmoqda ({period})")
-        m = {"today": 1, "yesterday": 1.1, "week": 7, "month": 30}.get(period, 1)
-
-        spend = round(random.uniform(20, 50) * m, 2)
-        leads = int(random.randint(50, 100) * m)
-        cpl = round(spend / leads, 2) if leads > 0 else 0
-        impressions = int(random.randint(30000, 50000) * m)
-        reach = int(impressions * random.uniform(0.4, 0.5))
-        ctr = round(random.uniform(1.0, 3.0), 2)
-        cpc = round(random.uniform(0.04, 0.12), 2)
-        cpm = round((spend / impressions) * 1000 if impressions > 0 else 0, 2)
-        messages = int(leads * random.uniform(1.2, 1.8))
-        frequency = round(impressions / reach if reach > 0 else 1, 2)
-
-        return {
-            "spend": spend,
-            "leads": leads,
-            "messages": messages,
-            "cpl": cpl,
-            "cpc": cpc,
-            "cpm": cpm,
-            "ctr": ctr,
-            "reach": reach,
-            "impressions": impressions,
-            "frequency": frequency,
-            "is_real_data": False,
-        }
-
-    def _get_fallback_campaigns(self) -> list:
-        """Fallback kampaniyalar ro'yxati."""
-        campaigns = [
-            {"campaign_name": "Linoleum Reels", "spend": 8.50, "leads": 32, "cpl": 0.27,
-             "cpc": 0.05, "cpm": 3.20, "ctr": 2.10, "reach": 6500, "impressions": 14200,
-             "frequency": 2.18, "messages": 45, "is_real_data": False},
-            {"campaign_name": "Plitka Carousel", "spend": 6.20, "leads": 18, "cpl": 0.34,
-             "cpc": 0.07, "cpm": 4.10, "ctr": 1.65, "reach": 4200, "impressions": 9800,
-             "frequency": 2.33, "messages": 22, "is_real_data": False},
-            {"campaign_name": "Kitchen Form", "spend": 10.70, "leads": 12, "cpl": 0.89,
-             "cpc": 0.14, "cpm": 7.80, "ctr": 0.85, "reach": 3800, "impressions": 8500,
-             "frequency": 2.24, "messages": 8, "is_real_data": False},
-        ]
-        return campaigns

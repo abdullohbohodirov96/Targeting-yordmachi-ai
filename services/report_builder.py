@@ -7,18 +7,22 @@ from utils.logger import logger
 async def build_target_report(period: str, include_analysis: bool = True) -> str:
     """
     To'liq target hisobotini tuzadi.
-    Meta API dan real data oladi, xato bo'lsa fallback ishlaydi.
+    Meta API dan real data oladi, xato bo'lsa xatoni ko'rsatadi.
     """
-    meta = MetaAdsService()
-    ai = AIAnalyzer()
+    try:
+        meta = MetaAdsService()
+        ai = AIAnalyzer()
 
-    # Account umumiy statistikasi
-    data = await meta.get_account_insights(period)
-    if not data:
-        return f"❌ Ma'lumot topilmadi ({period})"
+        # Account umumiy statistikasi
+        data = await meta.get_account_insights(period)
+        if not data:
+            return f"❌ Ma'lumot topilmadi ({period})"
 
-    # Kampaniyalar
-    campaigns = await meta.get_campaign_insights(period)
+        # Kampaniyalar
+        campaigns = await meta.get_campaign_insights(period)
+    except Exception as e:
+        logger.error(f"Meta API dan ma'lumot olishda xato: {e}")
+        return f"❌ Meta API Xatoligi: {e}"
 
     # Eng yaxshi va yomon kampaniya
     best_name = "—"
@@ -41,13 +45,9 @@ async def build_target_report(period: str, include_analysis: bool = True) -> str
         "month": "OYLIK"
     }.get(period, period.upper())
 
-    # Data source label
-    source = "🟢 Real Data" if data.get("is_real_data") else "🟡 Test Data"
-
     report = (
         f"📊 {period_label} TARGET HISOBOTI\n\n"
-        f"📅 Sana: {date_str}\n"
-        f"{source}\n\n"
+        f"📅 Sana: {date_str}\n\n"
         f"💰 Xarajat: ${data['spend']:.2f}\n"
         f"📩 Leadlar: {data['leads']}\n"
         f"✉️ Xabarlar: {data['messages']}\n"
@@ -76,8 +76,12 @@ async def build_target_report(period: str, include_analysis: bool = True) -> str
 
 async def build_campaigns_report(period: str) -> str:
     """Kampaniyalar bo'yicha alohida hisobot."""
-    meta = MetaAdsService()
-    campaigns = await meta.get_campaign_insights(period)
+    try:
+        meta = MetaAdsService()
+        campaigns = await meta.get_campaign_insights(period)
+    except Exception as e:
+        logger.error(f"Meta API dan ma'lumot olishda xato: {e}")
+        return f"❌ Meta API Xatoligi: {e}"
 
     if not campaigns:
         return "❌ Kampaniya ma'lumotlari topilmadi."

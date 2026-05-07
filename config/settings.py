@@ -25,4 +25,5 @@ GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID")
 
 # === SCHEDULER ===
 TIMEZONE = "Asia/Tashkent"
-REPORT_HOURS = [9, 15, 21]
+REPORT_HOURS = [9]
+

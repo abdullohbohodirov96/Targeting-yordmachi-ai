@@ -45,9 +45,13 @@ async def build_target_report(period: str, include_analysis: bool = True) -> str
         "month": "OYLIK"
     }.get(period, period.upper())
 
+    # Data source label
+    source = "🟢 Real Data" if data.get("is_real_data") else "🟡 Test Data"
+
     report = (
         f"📊 {period_label} TARGET HISOBOTI\n\n"
-        f"📅 Sana: {date_str}\n\n"
+        f"📅 Sana: {date_str}\n"
+        f"{source}\n\n"
         f"💰 Xarajat: ${data['spend']:.2f}\n"
         f"📩 Leadlar: {data['leads']}\n"
         f"✉️ Xabarlar: {data['messages']}\n"

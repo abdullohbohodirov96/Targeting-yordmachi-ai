@@ -10,6 +10,7 @@ if not BOT_TOKEN:
 
 # === TELEGRAM ===
 GROUP_ID = os.getenv("GROUP_ID")
+ADMIN_ID = os.getenv("ADMIN_ID")
 
 # === META ADS ===
 META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")
@@ -26,4 +27,3 @@ GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID")
 # === SCHEDULER ===
 TIMEZONE = "Asia/Tashkent"
 REPORT_HOURS = [9]
-

@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN environment variable is missing")
 GROUP_ID = os.getenv("GROUP_ID")
 
 META_ACCESS_TOKEN = os.getenv("META_ACCESS_TOKEN")

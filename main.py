@@ -12,6 +12,8 @@ from services.report_builder import build_report
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
+logging.info("BOT_TOKEN loaded: YES")
+
 # Initialize bot and dispatcher
 bot = Bot(token=config.TOKEN)
 dp = Dispatcher()
@@ -69,12 +71,9 @@ async def cmd_analyze(message: Message):
     await message.answer(f"Analiz natijalari:\n\n{report}")
 
 async def main():
-    if not config.TOKEN or config.TOKEN == "your_telegram_bot_token_here":
-        logging.error("Bot tokeni topilmadi yoki .env da to'g'ri kiritilmagan!")
-        sys.exit(1)
-        
     logging.info("Bot ishga tushirildi...")
-    # Pollingni boshlash
+    # Webhook larni o'chirish va Pollingni boshlash
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 
 if __name__ == "__main__":

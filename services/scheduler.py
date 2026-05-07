@@ -12,10 +12,20 @@ async def send_scheduled_report(bot: Bot):
         return
 
     try:
+        from datetime import datetime
+        import pytz
+        
+        # Hozirgi soatni aniqlaymiz
+        tz = pytz.timezone(TIMEZONE)
+        current_hour = datetime.now(tz).hour
+        
+        # Agar ertalab 9:00 bo'lsa, kechagi kun hisobotini tashlaymiz
+        period = "yesterday" if current_hour < 12 else "today"
+        
         # Guruhga tashlanadigan reportda is_admin=False, include_analysis=False bo'ladi
-        report = await build_target_report("today", is_admin=False, include_analysis=False)
+        report = await build_target_report(period, is_admin=False, include_analysis=False)
         await bot.send_message(chat_id=GROUP_ID, text=report)
-        logger.info("✅ Avtomatik oddiy hisobot guruhga yuborildi.")
+        logger.info(f"✅ Avtomatik oddiy hisobot guruhga yuborildi ({period}).")
     except Exception as e:
         logger.error(f"❌ Avtomatik hisobot yuborishda xatolik: {e}")
 

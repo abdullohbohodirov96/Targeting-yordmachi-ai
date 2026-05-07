@@ -10,11 +10,64 @@ def is_admin(user_id: int) -> bool:
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
-    await message.answer("👋 Assalomu alaykum! Men AI Target Assistant man.")
+    if not is_admin(message.from_user.id):
+        await message.answer("Uzr, sizda access mavjud emas.")
+        return
+
+    text = (
+        "🤖 DUNYABUNYA AI TARGET ASSISTANT\n\n"
+        "Assalomu alaykum, Abdulloh 👋\n\n"
+        "Men sizning shaxsiy AI marketing va target assistantingizman.\n\n"
+        "Men quyidagilarni qila olaman:\n\n"
+        "📊 Meta Ads analiz\n"
+        "📈 CPL / CTR / CPM monitoring\n"
+        "🎯 Target tavsiyalar\n"
+        "🎬 Creative va reels ssenariylar\n"
+        "🧠 AI marketing analiz\n"
+        "💡 Scale va optimization tavsiyalar\n"
+        "⚠️ Avtomatik ogohlantirishlar\n\n"
+        "Buyruqlarni ko‘rish:\n"
+        "👉 /help"
+    )
+    await message.answer(text)
 
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
-    await message.answer("Buyruqlar:\n/today\n/analyze\n/campaigns")
+    if not is_admin(message.from_user.id):
+        await message.answer("Uzr, sizda access mavjud emas.")
+        return
+
+    text = (
+        "📌 TARGET AI ASSISTANT BUYRUQLARI\n\n"
+        "📊 HISOBOTLAR\n"
+        "/today — bugungi hisobot\n"
+        "/yesterday — kechagi hisobot\n"
+        "/week — haftalik hisobot\n"
+        "/month — oylik hisobot\n"
+        "/campaigns — kampaniyalar\n"
+        "/analyze — AI analiz\n\n"
+        "🤖 AI ASSISTANT\n\n"
+        "* nega CPL oshdi\n"
+        "* creative yozib ber\n"
+        "* reels ssenariy ber\n"
+        "* target setting ber\n"
+        "* audience ber\n"
+        "* budgetni oshiraymi\n"
+        "* qaysi kampaniya yaxshi\n"
+        "* lead sifati qanday\n\n"
+        "🏗 Qurilish sohasi:\n\n"
+        "* gipsokarton\n"
+        "* profil\n"
+        "* linoleum\n"
+        "* oboy\n"
+        "* kafel\n"
+        "* santexnika\n"
+        "* bazalt\n"
+        "* penoplex\n\n"
+        "📞 Bog‘lanish:\n"
+        "+998 (50) 999-97-33"
+    )
+    await message.answer(text)
 
 @router.message(Command("today"))
 async def cmd_today(message: types.Message):

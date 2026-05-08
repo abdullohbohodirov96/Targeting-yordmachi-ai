@@ -97,7 +97,7 @@ async def cmd_today(message: types.Message):
     is_group = message.chat.type in ["group", "supergroup"]
 
     if is_group:
-        # Guruhda har doim faqat oddiy hisobot (real data bilan)
+        # Guruhda faqat oddiy KPI report
         report = await build_target_report("today", is_admin=False, include_analysis=False)
         await message.answer(report)
     else:
@@ -110,33 +110,63 @@ async def cmd_today(message: types.Message):
 
 @router.message(Command("yesterday"))
 async def cmd_yesterday(message: types.Message):
-    if is_admin(message.from_user.id):
+    is_group = message.chat.type in ["group", "supergroup"]
+
+    if is_group:
+        # Guruhda faqat oddiy KPI report
         await message.answer("⏳ Yuklanmoqda...")
-        report = await build_target_report("yesterday", is_admin=True, include_analysis=True)
+        report = await build_target_report("yesterday", is_admin=False, include_analysis=False)
         await message.answer(report)
     else:
-        await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
+        if is_admin(message.from_user.id):
+            await message.answer("⏳ Yuklanmoqda...")
+            report = await build_target_report("yesterday", is_admin=True, include_analysis=True)
+            await message.answer(report)
+        else:
+            await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
 
 @router.message(Command("week"))
 async def cmd_week(message: types.Message):
-    if is_admin(message.from_user.id):
+    is_group = message.chat.type in ["group", "supergroup"]
+
+    if is_group:
+        # Guruhda faqat oddiy KPI report
         await message.answer("⏳ Yuklanmoqda...")
-        report = await build_target_report("week", is_admin=True, include_analysis=True)
+        report = await build_target_report("week", is_admin=False, include_analysis=False)
         await message.answer(report)
     else:
-        await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
+        if is_admin(message.from_user.id):
+            await message.answer("⏳ Yuklanmoqda...")
+            report = await build_target_report("week", is_admin=True, include_analysis=True)
+            await message.answer(report)
+        else:
+            await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
 
 @router.message(Command("month"))
 async def cmd_month(message: types.Message):
-    if is_admin(message.from_user.id):
+    is_group = message.chat.type in ["group", "supergroup"]
+
+    if is_group:
+        # Guruhda faqat oddiy KPI report
         await message.answer("⏳ Yuklanmoqda...")
-        report = await build_target_report("month", is_admin=True, include_analysis=True)
+        report = await build_target_report("month", is_admin=False, include_analysis=False)
         await message.answer(report)
     else:
-        await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
+        if is_admin(message.from_user.id):
+            await message.answer("⏳ Yuklanmoqda...")
+            report = await build_target_report("month", is_admin=True, include_analysis=True)
+            await message.answer(report)
+        else:
+            await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
 
 @router.message(Command("campaigns"))
 async def cmd_campaigns(message: types.Message):
+    is_group = message.chat.type in ["group", "supergroup"]
+
+    if is_group:
+        await message.answer("⚠️ Kampaniya ma'lumotlari faqat admin private chatda ko'rsatiladi.")
+        return
+
     if is_admin(message.from_user.id):
         await message.answer("⏳ Kampaniyalar yuklanmoqda...")
         report = await build_campaigns_report("today")
@@ -146,6 +176,12 @@ async def cmd_campaigns(message: types.Message):
 
 @router.message(Command("analyze"))
 async def cmd_analyze(message: types.Message):
+    is_group = message.chat.type in ["group", "supergroup"]
+
+    if is_group:
+        await message.answer("⚠️ AI analiz faqat admin private chatda ko'rsatiladi.")
+        return
+
     if is_admin(message.from_user.id):
         await message.answer("🤖 AI tahlil qilinmoqda...")
         report = await build_target_report("today", is_admin=True, include_analysis=True)

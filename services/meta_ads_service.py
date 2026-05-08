@@ -19,7 +19,7 @@ class MetaAdsService:
         mapping = {
             "today": "today",
             "yesterday": "yesterday",
-            "week": "this_week",
+            "week": "last_7d",
             "month": "this_month"
         }
         return mapping.get(period, "today")
@@ -56,6 +56,12 @@ class MetaAdsService:
                     result = await resp.json()
                     data_list = result.get("data", [])
                     if not data_list:
+                        logger.warning(
+                            f"Meta API empty response. "
+                            f"Period: {period}, date_preset: {date_preset}, "
+                            f"URL: {url}, "
+                            f"Raw response: {result}"
+                        )
                         return self._empty_account_data()
 
                     raw = data_list[0]
@@ -97,6 +103,12 @@ class MetaAdsService:
                     result = await resp.json()
                     data_list = result.get("data", [])
                     if not data_list:
+                        logger.warning(
+                            f"Meta Campaign API empty response. "
+                            f"Period: {period}, date_preset: {date_preset}, "
+                            f"URL: {url}, "
+                            f"Raw response: {result}"
+                        )
                         return []
 
                     campaigns = []

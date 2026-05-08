@@ -10,11 +10,23 @@ def is_admin(user_id: int) -> bool:
     return ADMIN_ID is not None and user_id == ADMIN_ID
 
 def is_marketing_topic(text: str) -> bool:
+    """Marketing/target mavzusiga tegishli kalit so'zlarni tekshiradi."""
     keywords = [
+        # Target & Ads
         "target", "reklama", "kreativ", "creative", "cpl", "ctr", "cpm", "cpc",
         "budget", "byudjet", "lead", "lid", "audience", "kampaniya", "campaign",
-        "reels", "ssenariy", "hook", "caption", "oferta", "roas", "pixel",
-        "gipsokarton", "linoleum", "kafel", "oboy", "santexnika", "marketing", "bot"
+        "roas", "pixel", "conversion", "konversiya",
+        # Creative & Content
+        "reels", "ssenariy", "hook", "caption", "oferta", "offer",
+        "ad copy", "content plan", "kontent", "post", "story", "stories",
+        # Sales & Strategy
+        "dm", "script", "strategiya", "strategy", "sales", "sotish", "savdo",
+        "marketing", "funnel", "voronka",
+        # Products
+        "gipsokarton", "linoleum", "kafel", "oboy", "santexnika",
+        "plitka", "eshik", "lyustra", "tarkett",
+        # Bot
+        "bot", "hisobot", "report",
     ]
     text_lower = text.lower()
     for kw in keywords:
@@ -26,16 +38,18 @@ def is_marketing_topic(text: str) -> bool:
 async def handle_text_questions(message: types.Message):
     """
     Foydalanuvchi erkin matnli savol berganida.
+    Admin — barcha marketing vazifalarni bajaradi + real data konteksti.
+    Oddiy user — faqat umumiy marketing/creative yordam, maxfiy raqamlar yo'q.
     """
     is_group = message.chat.type in ["group", "supergroup"]
-    
+
     is_reply_to_bot = (message.reply_to_message and 
                        message.reply_to_message.from_user.id == message.bot.id)
 
-    # 1. Topic detection (NLP keyword fallback)
+    # Topic detection
     should_answer = False
     if not is_group:
-        should_answer = True # Private chatda doim harakat qiladi, AI "IGNORE" qaytarishi mumkin
+        should_answer = True  # Private chatda doim harakat qiladi, AI "IGNORE" qaytarishi mumkin
     else:
         if is_reply_to_bot or is_marketing_topic(message.text):
             should_answer = True
@@ -48,7 +62,7 @@ async def handle_text_questions(message: types.Message):
 
     try:
         ai = AIAnalyzer()
-        
+
         # Maxfiy ma'lumotlarni faqat admin uchun olamiz
         data = {}
         campaigns = []
@@ -57,11 +71,15 @@ async def handle_text_questions(message: types.Message):
         if admin_status:
             meta = MetaAdsService()
             data = await meta.get_account_insights("today")
-            campaigns = await meta.get_campaign_insights("today")
-            yesterday_data = await meta.get_account_insights("yesterday")
+            campaigns_result = await meta.get_campaign_insights("today")
+            campaigns = campaigns_result if campaigns_result is not None else []
+            yesterday_result = await meta.get_account_insights("yesterday")
+            yesterday_data = yesterday_result if yesterday_result is not None else {}
 
-        answer = await ai.answer_question(message.text, data, campaigns, yesterday_data, is_admin=admin_status)
-        
+        answer = await ai.answer_question(
+            message.text, data, campaigns, yesterday_data, is_admin=admin_status
+        )
+
         # Agar bot mavzudan tashqari deb topsa, indamaydi
         if answer and answer.strip() != "IGNORE":
             await message.reply(f"🤖 Assistant:\n\n{answer}")

@@ -13,178 +13,94 @@ async def cmd_start(message: types.Message):
     text = (
         "🤖 *DUNYABUNYA AI TARGET ASSISTANT*\n\n"
         "Assalomu alaykum 👋\n\n"
-        "Bu bot Dunyabunya uchun yaratilgan AI marketing va target assistant hisoblanadi.\n\n"
-        "Bot imkoniyatlari:\n"
-        "📊 Meta Ads hisobotlari (faqat real data)\n"
-        "📈 CPL / CTR / CPM monitoring\n"
-        "🎯 Target analiz va tavsiyalar\n"
-        "🎬 Creative va reels ssenariylar\n"
-        "🧠 AI marketing assistant\n"
-        "📝 Content plan va ad copy\n"
-        "💡 Marketing strategiya\n"
-        "🎯 Target setting va audience\n"
-        "📞 DM script va sales script\n\n"
-        "Buyruqlarni ko'rish:\n"
-        "👉 /help\n\n"
-        "⚠️ *Eslatma:*\n"
-        "Ba'zi professional funksiyalar faqat admin uchun mavjud.\n"
-        "Bot faqat real Meta Ads data asosida ishlaydi."
+        "Men orqali Meta Ads hisobotlarini olishingiz va marketing bo'yicha maslahat olishingiz mumkin.\n\n"
+        "📊 *Statistika buyruqlari:*\n"
+        "/today — bugungi\n"
+        "/yesterday — kechagi\n"
+        "/week — haftalik (oxirgi 7 kun)\n"
+        "/month — oylik (oy boshidan)\n\n"
+        "💡 *Natural Language:* Shunchaki '1 may statistika' deb yozishingiz ham mumkin.\n\n"
+        "⚠️ *Eslatma:* AI analiz va kampaniyalar tahlili faqat admin uchun."
     )
     await message.answer(text, parse_mode="Markdown")
 
 @router.message(Command("help"))
 async def cmd_help(message: types.Message):
-    if is_admin(message.from_user.id):
+    is_user_admin = is_admin(message.from_user.id)
+    
+    if is_user_admin:
         text = (
-            "📌 *BOT YORDAMI — ADMIN*\n\n"
-            "📊 *HISOBOTLAR*\n"
-            "/today — bugungi hisobot\n"
-            "/yesterday — kechagi hisobot\n"
-            "/week — haftalik hisobot\n"
-            "/month — oylik hisobot\n"
-            "/campaigns — kampaniyalar\n"
-            "/analyze — AI analiz\n\n"
-            "🤖 *AI ASSISTANT MISOLLARI*\n\n"
-            "📈 *Statistika savollari:*\n"
-            "• nega CPL oshdi\n"
-            "• budgetni oshiraymi\n"
-            "• qaysi kampaniya yaxshi\n"
-            "• qaysi kampaniya yomon\n"
-            "• lead sifati qanday\n"
-            "• CPM nega oshdi\n"
-            "• CTR nega tushdi\n"
-            "• qaysi reklamani o'chirish kerak\n\n"
-            "🎬 *Creative vazifalar:*\n"
-            "• creative yozib ber\n"
-            "• reels ssenariy ber\n"
-            "• hook yoz\n"
-            "• caption yoz\n"
-            "• ad copy yoz\n"
-            "• DM script yoz\n"
-            "• sales script yoz\n"
-            "• offer yaratib ber\n"
-            "• content plan tuz\n\n"
-            "🎯 *Strategiya:*\n"
-            "• target setting ber\n"
-            "• audience ber\n"
-            "• budget tavsiya ber\n"
-            "• marketing strategiya ber\n"
-            "• campaign analysis qil\n\n"
-            "📞 *Bog'lanish:*\n"
-            "+998 (50) 999-97-33"
+            "📌 *ADMIN BUYRUQLARI*\n\n"
+            "📈 *Statistika:*\n"
+            "/today, /yesterday, /week, /month\n"
+            "/analyze — AI tahlil\n"
+            "/campaigns — kampaniyalar\n\n"
+            "🎬 *AI Assistant:* Kreativ, reels, strategiya haqida so'rang.\n"
         )
     else:
         text = (
-            "📌 *BOT YORDAMI*\n\n"
-            "🤖 *AI ASSISTANT MISOLLARI*\n\n"
-            "• creative yozib ber\n"
-            "• reels ssenariy ber\n"
-            "• hook yoz\n"
-            "• caption yoz\n"
-            "• target setting ber\n"
-            "• audience ber\n"
-            "• content plan tuz\n"
-            "• marketing maslahat ber\n\n"
-            "⚠️ Statistika va kampaniya ma'lumotlari faqat admin uchun.\n\n"
-            "📞 *Bog'lanish:*\n"
-            "+998 (50) 999-97-33"
+            "📌 *FOYDALANUVCHI BUYRUQLARI*\n\n"
+            "📈 *Statistika:*\n"
+            "/today, /yesterday, /week, /month\n"
+            "Yoki: '1-may hisobot', 'haftalik statistika'\n\n"
+            "🎬 *AI Assistant:* Kreativ yoki reels ssenariy so'rang.\n"
         )
     await message.answer(text, parse_mode="Markdown")
 
+async def _send_report(message: types.Message, period: str):
+    """Umumiy report yuborish logikasi."""
+    await message.answer("⏳ Yuklanmoqda...")
+    is_user_admin = is_admin(message.from_user.id)
+    is_private = message.chat.type == "private"
+    
+    # Faqat private chatda va admin bo'lsa - to'liq report, aks holda public
+    admin_mode = is_user_admin and is_private
+    
+    report = await build_target_report(
+        period=period, 
+        is_admin=admin_mode, 
+        include_analysis=admin_mode
+    )
+    await message.answer(report)
+
 @router.message(Command("today"))
 async def cmd_today(message: types.Message):
-    await message.answer("⏳ Yuklanmoqda...")
-    is_group = message.chat.type in ["group", "supergroup"]
-
-    if is_group:
-        # Guruhda faqat oddiy KPI report
-        report = await build_target_report("today", is_admin=False, include_analysis=False)
-        await message.answer(report)
-    else:
-        # Private chat
-        if is_admin(message.from_user.id):
-            report = await build_target_report("today", is_admin=True, include_analysis=True)
-            await message.answer(report)
-        else:
-            await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
+    await _send_report(message, "today")
 
 @router.message(Command("yesterday"))
 async def cmd_yesterday(message: types.Message):
-    is_group = message.chat.type in ["group", "supergroup"]
-
-    if is_group:
-        # Guruhda faqat oddiy KPI report
-        await message.answer("⏳ Yuklanmoqda...")
-        report = await build_target_report("yesterday", is_admin=False, include_analysis=False)
-        await message.answer(report)
-    else:
-        if is_admin(message.from_user.id):
-            await message.answer("⏳ Yuklanmoqda...")
-            report = await build_target_report("yesterday", is_admin=True, include_analysis=True)
-            await message.answer(report)
-        else:
-            await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
+    await _send_report(message, "yesterday")
 
 @router.message(Command("week"))
 async def cmd_week(message: types.Message):
-    is_group = message.chat.type in ["group", "supergroup"]
-
-    if is_group:
-        # Guruhda faqat oddiy KPI report
-        await message.answer("⏳ Yuklanmoqda...")
-        report = await build_target_report("week", is_admin=False, include_analysis=False)
-        await message.answer(report)
-    else:
-        if is_admin(message.from_user.id):
-            await message.answer("⏳ Yuklanmoqda...")
-            report = await build_target_report("week", is_admin=True, include_analysis=True)
-            await message.answer(report)
-        else:
-            await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
+    await _send_report(message, "week")
 
 @router.message(Command("month"))
 async def cmd_month(message: types.Message):
-    is_group = message.chat.type in ["group", "supergroup"]
-
-    if is_group:
-        # Guruhda faqat oddiy KPI report
-        await message.answer("⏳ Yuklanmoqda...")
-        report = await build_target_report("month", is_admin=False, include_analysis=False)
-        await message.answer(report)
-    else:
-        if is_admin(message.from_user.id):
-            await message.answer("⏳ Yuklanmoqda...")
-            report = await build_target_report("month", is_admin=True, include_analysis=True)
-            await message.answer(report)
-        else:
-            await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
+    await _send_report(message, "month")
 
 @router.message(Command("campaigns"))
 async def cmd_campaigns(message: types.Message):
-    is_group = message.chat.type in ["group", "supergroup"]
-
-    if is_group:
-        await message.answer("⚠️ Kampaniya ma'lumotlari faqat admin private chatda ko'rsatiladi.")
+    if not is_admin(message.from_user.id):
+        await message.answer("Uzr, bu ma'lumot faqat admin uchun.")
         return
-
-    if is_admin(message.from_user.id):
-        await message.answer("⏳ Kampaniyalar yuklanmoqda...")
-        report = await build_campaigns_report("today")
-        await message.answer(report)
-    else:
-        await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
+    if message.chat.type != "private":
+        await message.answer("⚠️ Maxfiy ma'lumotlar faqat shaxsiy chatda ko'rsatiladi.")
+        return
+    
+    await message.answer("⏳ Kampaniyalar yuklanmoqda...")
+    report = await build_campaigns_report("today")
+    await message.answer(report)
 
 @router.message(Command("analyze"))
 async def cmd_analyze(message: types.Message):
-    is_group = message.chat.type in ["group", "supergroup"]
-
-    if is_group:
-        await message.answer("⚠️ AI analiz faqat admin private chatda ko'rsatiladi.")
+    if not is_admin(message.from_user.id):
+        await message.answer("Uzr, bu ma'lumot faqat admin uchun.")
         return
-
-    if is_admin(message.from_user.id):
-        await message.answer("🤖 AI tahlil qilinmoqda...")
-        report = await build_target_report("today", is_admin=True, include_analysis=True)
-        await message.answer(report)
-    else:
-        await message.answer("Uzr, sizga bu ma'lumotlarni bera olmayman.")
+    if message.chat.type != "private":
+        await message.answer("⚠️ AI analiz faqat shaxsiy chatda ko'rsatiladi.")
+        return
+        
+    await message.answer("🤖 AI tahlil qilinmoqda...")
+    report = await build_target_report("today", is_admin=True, include_analysis=True)
+    await message.answer(report)

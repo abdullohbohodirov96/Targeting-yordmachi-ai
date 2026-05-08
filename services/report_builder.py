@@ -15,58 +15,75 @@ NO_DATA_MSG = (
 )
 
 
-async def build_target_report(period: str, is_admin: bool = False, include_analysis: bool = False) -> str:
+async def build_target_report(period: str = None, since: str = None, until: str = None, is_admin: bool = False, include_analysis: bool = False) -> str:
     """
-    To'liq target hisobotini tuzadi.
-    Faqat real Meta API data asosida ishlaydi.
-    Agar real data olinmasa, error xabari qaytaradi.
+    Asosiy report builder. 
+    period yoki since/until orqali data oladi.
+    Public yoki Admin formatda qaytaradi.
     """
     try:
         meta = MetaAdsService()
-        ai = AIAnalyzer()
+        
+        # 1. Data olish
+        if since and until:
+            data = await meta.get_account_insights_by_date(since, until)
+            date_range_text = f"{datetime.strptime(since, '%Y-%m-%d').strftime('%d.%m.%Y')} — {datetime.strptime(until, '%Y-%m-%d').strftime('%d.%m.%Y')}"
+            if since == until:
+                date_range_text = datetime.strptime(since, '%Y-%m-%d').strftime('%d.%m.%Y')
+        else:
+            period = period or "today"
+            data = await meta.get_account_insights(period)
+            date_range_text = meta.get_date_range_text(period)
 
-        # Account umumiy statistikasi
-        data = await meta.get_account_insights(period)
-
-        # Real data olinmadi — hech qanday report tuzmaymiz
         if data is None:
             return NO_DATA_MSG
 
-        # Kampaniyalar faqat admin uchun kerak bo'lishi mumkin
-        campaigns = []
+        # 2. Public report tuzish
+        report = build_public_report(data, date_range_text)
+
+        # 3. Admin qismlarini qo'shish (faqat is_admin=True bo'lsa)
         if is_admin:
-            camp_result = await meta.get_campaign_insights(period)
+            campaigns = []
+            camp_result = await meta.get_campaign_insights(period or "today")
             campaigns = camp_result if camp_result is not None else []
+            
+            # Kampaniya tahlili qo'shish
+            admin_part = _build_admin_part(campaigns)
+            report += admin_part
+
+            # AI Analiz qo'shish
+            if include_analysis:
+                ai = AIAnalyzer()
+                try:
+                    yesterday_data = await meta.get_account_insights("yesterday")
+                    analysis = await ai.analyze_metrics(data, campaigns, yesterday_data)
+                    report += f"\n\n🤖 AI Tahlil:\n{analysis}"
+                except Exception as e:
+                    logger.error(f"AI tahlil xatolik: {e}")
+                    report += "\n\n🤖 AI Tahlil:\nHozircha tahlil mavjud emas."
+
+        return report
 
     except Exception as e:
-        logger.error(f"Meta API dan ma'lumot olishda xato: {e}")
-        return f"❌ Meta API Xatoligi: {e}"
+        logger.error(f"Report tuzishda xato: {e}")
+        return f"❌ Xatolik yuz berdi: {e}"
 
-    # Raqamlarni formatlash
+
+def build_public_report(data: dict, date_range_text: str) -> str:
+    """Faqat KPI raqamlarini o'z ichiga olgan ochiq hisobot."""
     impressions_fmt = f"{data['impressions']:,}".replace(",", " ")
     reach_fmt = f"{data['reach']:,}".replace(",", " ")
 
-    # Date range text
-    date_range_text = meta.get_date_range_text(period)
-
-    period_label = {
-        "today": "BUGUNGI",
-        "yesterday": "KECHAGI",
-        "week": "HAFTALIK",
-        "month": "OYLIK"
-    }.get(period, period.upper())
-
-    # CPL formatlash — hisoblash mumkin bo'lmasa aniq aytamiz
+    # CPL formatlash
     if data['leads'] > 0 and data['spend'] > 0:
         cpl_text = f"${data['cpl']:.2f}"
     elif data['leads'] == 0 and data['spend'] > 0:
-        cpl_text = "hisoblab bo'lmadi (lead yo'q)"
+        cpl_text = "hisoblab bo'lmadi"
     else:
         cpl_text = "$0.00"
 
-    # ODDIY HISOBOT QISMI
-    report = (
-        f"📊 {period_label} TARGET HISOBOTI\n\n"
+    return (
+        f"📊 TARGET HISOBOTI\n"
         f"📅 Davr: {date_range_text}\n"
         f"🟢 Real Data\n\n"
         f"💰 Xarajat: ${data['spend']:.2f}\n"
@@ -81,78 +98,45 @@ async def build_target_report(period: str, is_admin: bool = False, include_analy
         f"🔄 Frequency: {data['frequency']}"
     )
 
-    # FAQAT ADMIN UCHUN QO'SHIMCHA QISMLAR
-    if is_admin:
-        best_name = "—"
-        worst_name = "—"
-        if campaigns:
-            best = max(campaigns, key=lambda c: c.get("leads", 0))
-            worst = min(campaigns, key=lambda c: c.get("ctr", 999))
-            best_name = best.get("campaign_name", "—")
-            worst_name = worst.get("campaign_name", "—")
 
-        report += (
-            f"\n\n🔥 Eng yaxshi kampaniya:\n{best_name}\n\n"
-            f"⚠️ Eng yomon kampaniya:\n{worst_name}"
-        )
-
-        if include_analysis:
-            try:
-                # Qo'shimcha kechagi data bilan solishtirish
-                yesterday_data = await meta.get_account_insights("yesterday")
-                analysis = await ai.analyze_metrics(data, campaigns, yesterday_data)
-                report += f"\n\n🤖 AI Tahlil:\n{analysis}"
-            except Exception as e:
-                logger.error(f"AI tahlil xatolik: {e}")
-                report += "\n\n🤖 AI Tahlil:\nHozircha tahlil mavjud emas."
-
-    return report
+def _build_admin_part(campaigns: list) -> str:
+    """Admin uchun maxfiy kampaniya ma'lumotlari."""
+    if not campaigns:
+        return "\n\n📋 Faol kampaniyalar topilmadi."
+    
+    best = max(campaigns, key=lambda c: c.get("leads", 0))
+    worst = min(campaigns, key=lambda c: c.get("ctr", 999))
+    
+    return (
+        f"\n\n🔥 Eng yaxshi kampaniya:\n{best.get('campaign_name', '—')}\n\n"
+        f"⚠️ Eng yomon kampaniya:\n{worst.get('campaign_name', '—')}"
+    )
 
 
 async def build_campaigns_report(period: str) -> str:
-    """Kampaniyalar bo'yicha alohida hisobot (faqat admin)."""
+    """Kampaniyalar bo'yicha batafsil hisobot (admin uchun)."""
     try:
         meta = MetaAdsService()
         campaigns = await meta.get_campaign_insights(period)
+        if campaigns is None: return NO_DATA_MSG
+        if not campaigns: return "📋 Hozirda faol kampaniyalar topilmadi."
+
+        date_text = meta.get_date_range_text(period)
+        lines = [f"📋 KAMPANIYALAR HISOBOTI\n📅 Davr: {date_text}\n"]
+        
+        for i, c in enumerate(campaigns, 1):
+            emoji = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}."))
+            c_leads = c.get('leads', 0)
+            c_spend = c.get('spend', 0)
+            cpl = f"${c.get('cpl', 0):.2f}" if c_leads > 0 else "—"
+            
+            lines.append(
+                f"{emoji} {c.get('campaign_name', '?')}\n"
+                f"   💰 ${c_spend:.2f} | 📩 {c_leads} lead\n"
+                f"   🎯 CPL: {cpl} | 📈 CTR: {c.get('ctr', 0)}%\n"
+            )
+        
+        return "\n".join(lines)
     except Exception as e:
-        logger.error(f"Meta API dan ma'lumot olishda xato: {e}")
-        return f"❌ Meta API Xatoligi: {e}"
-
-    # Real data olinmadi
-    if campaigns is None:
-        return NO_DATA_MSG
-
-    if not campaigns:
-        return "📋 Hozirda faol kampaniyalar topilmadi."
-
-    # Date range text
-    date_range_text = meta.get_date_range_text(period)
-
-    lines = [f"📋 KAMPANIYALAR HISOBOTI\n📅 Davr: {date_range_text}\n"]
-    for i, c in enumerate(campaigns, 1):
-        emoji = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}."))
-
-        # CPL formatlash
-        c_leads = c.get('leads', 0)
-        c_spend = c.get('spend', 0)
-        if c_leads > 0 and c_spend > 0:
-            cpl_text = f"${c.get('cpl', 0):.2f}"
-        elif c_leads == 0 and c_spend > 0:
-            cpl_text = "hisoblab bo'lmadi"
-        else:
-            cpl_text = "$0.00"
-
-        lines.append(
-            f"{emoji} {c.get('campaign_name', '?')}\n"
-            f"   💰 ${c_spend:.2f} | 📩 {c_leads} lead\n"
-            f"   🎯 CPL: {cpl_text} | 📈 CTR: {c.get('ctr', 0)}%\n"
-            f"   🔄 Freq: {c.get('frequency', 0)}\n"
-        )
-
-    # Eng yaxshi/yomon
-    best = max(campaigns, key=lambda c: c.get("leads", 0))
-    worst = min(campaigns, key=lambda c: c.get("ctr", 999))
-    lines.append(f"✅ Scale qilish: {best.get('campaign_name', '?')}")
-    lines.append(f"❌ O'chirish/yangilash: {worst.get('campaign_name', '?')}")
-
-    return "\n".join(lines)
+        logger.error(f"Campaign report xato: {e}")
+        return f"❌ Xato: {e}"

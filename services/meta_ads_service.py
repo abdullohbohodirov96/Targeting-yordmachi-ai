@@ -38,6 +38,10 @@ class MetaAdsService:
         else:
             return {"date_preset": "today"}
 
+    def _get_custom_date_params(self, since: str, until: str) -> dict:
+        """Custom date range uchun time_range parametrini qaytaradi."""
+        return {"time_range": f'{{"since":"{since}","until":"{until}"}}'}
+
     def get_date_range_text(self, period: str) -> str:
         """Reportda ko'rsatish uchun date range textini qaytaradi."""
         today = datetime.now().date()
@@ -69,6 +73,25 @@ class MetaAdsService:
             return None
 
         date_params = self._get_date_params(period)
+        return await self._fetch_account_insights(date_params, period)
+
+    async def get_account_insights_by_date(self, since: str, until: str) -> dict | None:
+        """
+        Custom date range bo'yicha account statistikasini oladi.
+        since/until: "YYYY-MM-DD" formatda.
+        """
+        if not self.access_token or not self.account_id:
+            logger.error(
+                "❌ META_ACCESS_TOKEN yoki META_AD_ACCOUNT_ID sozlanmagan. "
+                "Render Environment Variables'ga qo'shing."
+            )
+            return None
+
+        date_params = self._get_custom_date_params(since, until)
+        return await self._fetch_account_insights(date_params, f"{since} -> {until}")
+
+    async def _fetch_account_insights(self, date_params: dict, debug_label: str) -> dict | None:
+        """Meta API'dan account insights olish uchun umumiy metod."""
         url = f"{self.base_url}/{self.account_id}/insights"
         params = {
             "access_token": self.access_token,
@@ -90,8 +113,7 @@ class MetaAdsService:
                     if not data_list:
                         logger.warning(
                             f"Meta API empty response. "
-                            f"Period: {period}, params: {date_params}, "
-                            f"URL: {url}, "
+                            f"Label: {debug_label}, params: {date_params}, "
                             f"Raw response: {result}"
                         )
                         return self._empty_account_data()
@@ -138,7 +160,6 @@ class MetaAdsService:
                         logger.warning(
                             f"Meta Campaign API empty response. "
                             f"Period: {period}, params: {date_params}, "
-                            f"URL: {url}, "
                             f"Raw response: {result}"
                         )
                         return []

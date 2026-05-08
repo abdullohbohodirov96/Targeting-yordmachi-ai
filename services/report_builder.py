@@ -46,7 +46,9 @@ async def build_target_report(period: str, is_admin: bool = False, include_analy
     impressions_fmt = f"{data['impressions']:,}".replace(",", " ")
     reach_fmt = f"{data['reach']:,}".replace(",", " ")
 
-    date_str = datetime.now().strftime("%d.%m.%Y")
+    # Date range text
+    date_range_text = meta.get_date_range_text(period)
+
     period_label = {
         "today": "BUGUNGI",
         "yesterday": "KECHAGI",
@@ -65,7 +67,7 @@ async def build_target_report(period: str, is_admin: bool = False, include_analy
     # ODDIY HISOBOT QISMI
     report = (
         f"📊 {period_label} TARGET HISOBOTI\n\n"
-        f"📅 Sana: {date_str}\n"
+        f"📅 Davr: {date_range_text}\n"
         f"🟢 Real Data\n\n"
         f"💰 Xarajat: ${data['spend']:.2f}\n"
         f"📩 Leadlar: {data['leads']}\n"
@@ -123,7 +125,10 @@ async def build_campaigns_report(period: str) -> str:
     if not campaigns:
         return "📋 Hozirda faol kampaniyalar topilmadi."
 
-    lines = ["📋 KAMPANIYALAR HISOBOTI\n"]
+    # Date range text
+    date_range_text = meta.get_date_range_text(period)
+
+    lines = [f"📋 KAMPANIYALAR HISOBOTI\n📅 Davr: {date_range_text}\n"]
     for i, c in enumerate(campaigns, 1):
         emoji = "🥇" if i == 1 else ("🥈" if i == 2 else ("🥉" if i == 3 else f"{i}."))
 

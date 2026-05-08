@@ -1,4 +1,5 @@
 import aiohttp
+from datetime import datetime, timedelta
 from config.settings import META_ACCESS_TOKEN, META_AD_ACCOUNT_ID, META_BASE_URL
 from utils.logger import logger
 
@@ -14,15 +15,46 @@ class MetaAdsService:
         self.account_id = str(META_AD_ACCOUNT_ID) if META_AD_ACCOUNT_ID else None
         self.base_url = META_BASE_URL
 
-    def _get_date_preset(self, period: str) -> str:
-        """Davr bo'yicha Meta API uchun date_preset ni qaytaradi."""
-        mapping = {
-            "today": "today",
-            "yesterday": "yesterday",
-            "week": "last_7d",
-            "month": "this_month"
-        }
-        return mapping.get(period, "today")
+    def _get_date_params(self, period: str) -> dict:
+        """
+        Davr bo'yicha Meta API uchun date parametrlarini qaytaradi.
+        today/yesterday uchun date_preset,
+        week/month uchun time_range (since/until).
+        """
+        today = datetime.now().date()
+
+        if period == "today":
+            return {"date_preset": "today"}
+        elif period == "yesterday":
+            return {"date_preset": "yesterday"}
+        elif period == "week":
+            since = (today - timedelta(days=6)).strftime("%Y-%m-%d")
+            until = today.strftime("%Y-%m-%d")
+            return {"time_range": f'{{"since":"{since}","until":"{until}"}}'}
+        elif period == "month":
+            since = today.replace(day=1).strftime("%Y-%m-%d")
+            until = today.strftime("%Y-%m-%d")
+            return {"time_range": f'{{"since":"{since}","until":"{until}"}}'}
+        else:
+            return {"date_preset": "today"}
+
+    def get_date_range_text(self, period: str) -> str:
+        """Reportda ko'rsatish uchun date range textini qaytaradi."""
+        today = datetime.now().date()
+        fmt = "%d.%m.%Y"
+
+        if period == "today":
+            return today.strftime(fmt)
+        elif period == "yesterday":
+            return (today - timedelta(days=1)).strftime(fmt)
+        elif period == "week":
+            since = today - timedelta(days=6)
+            return f"{since.strftime(fmt)} — {today.strftime(fmt)}"
+        elif period == "month":
+            since = today.replace(day=1)
+            return f"{since.strftime(fmt)} — {today.strftime(fmt)}"
+        else:
+            return today.strftime(fmt)
 
     async def get_account_insights(self, period: str) -> dict | None:
         """
@@ -36,13 +68,13 @@ class MetaAdsService:
             )
             return None
 
-        date_preset = self._get_date_preset(period)
+        date_params = self._get_date_params(period)
         url = f"{self.base_url}/{self.account_id}/insights"
         params = {
             "access_token": self.access_token,
             "fields": "spend,impressions,reach,cpc,cpm,ctr,frequency,actions",
-            "date_preset": date_preset,
             "level": "account",
+            **date_params,
         }
 
         try:
@@ -58,7 +90,7 @@ class MetaAdsService:
                     if not data_list:
                         logger.warning(
                             f"Meta API empty response. "
-                            f"Period: {period}, date_preset: {date_preset}, "
+                            f"Period: {period}, params: {date_params}, "
                             f"URL: {url}, "
                             f"Raw response: {result}"
                         )
@@ -82,14 +114,14 @@ class MetaAdsService:
             )
             return None
 
-        date_preset = self._get_date_preset(period)
+        date_params = self._get_date_params(period)
         url = f"{self.base_url}/{self.account_id}/insights"
         params = {
             "access_token": self.access_token,
             "fields": "campaign_name,spend,impressions,reach,cpc,cpm,ctr,frequency,actions",
-            "date_preset": date_preset,
             "level": "campaign",
             "limit": 50,
+            **date_params,
         }
 
         try:
@@ -105,7 +137,7 @@ class MetaAdsService:
                     if not data_list:
                         logger.warning(
                             f"Meta Campaign API empty response. "
-                            f"Period: {period}, date_preset: {date_preset}, "
+                            f"Period: {period}, params: {date_params}, "
                             f"URL: {url}, "
                             f"Raw response: {result}"
                         )

@@ -1,16 +1,30 @@
 import asyncio
 from aiogram import Bot, Dispatcher
-from config.settings import BOT_TOKEN, ADMIN_ID
+from config.settings import (
+    BOT_TOKEN, ADMIN_ID, OPENAI_API_KEY,
+    META_ACCESS_TOKEN, META_AD_ACCOUNT_ID
+)
 from utils.logger import logger
 from handlers import commands, messages
 from services.scheduler import setup_scheduler
 
 
 async def main():
-    logger.info("BOT_TOKEN loaded: YES")
+    # Startup diagnostika — keylarni to'liq print qilmaymiz
+    logger.info(f"BOT_TOKEN loaded: YES")
+    logger.info(f"ADMIN_ID loaded: {'YES' if ADMIN_ID else 'NO'}")
+    logger.info(f"OPENAI_API_KEY loaded: {'YES' if OPENAI_API_KEY else 'NO'}")
+    logger.info(f"META_ACCESS_TOKEN loaded: {'YES' if META_ACCESS_TOKEN else 'NO'}")
+    logger.info(f"META_AD_ACCOUNT_ID loaded: {'YES' if META_AD_ACCOUNT_ID else 'NO'}")
 
     if not ADMIN_ID:
         logger.warning("⚠️ ADMIN_ID sozlanmagan! Private chatlarda bot hech kimga access bermaydi.")
+
+    if not OPENAI_API_KEY:
+        logger.warning("⚠️ OPENAI_API_KEY sozlanmagan! AI analiz va savol-javob ishlamaydi.")
+
+    if not META_ACCESS_TOKEN or not META_AD_ACCOUNT_ID:
+        logger.warning("⚠️ Meta Ads credentials sozlanmagan! Hisobotlar ishlamaydi.")
 
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher()
@@ -20,7 +34,7 @@ async def main():
 
     setup_scheduler(bot)
 
-    logger.info("AI Target Assistant Started Successfully")
+    logger.info("✅ AI Target Assistant Started Successfully")
     await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
 

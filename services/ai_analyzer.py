@@ -36,7 +36,13 @@ class AIAnalyzer:
 
     def __init__(self):
         self.api_key = OPENAI_API_KEY
-        self.client = AsyncOpenAI(api_key=self.api_key) if self.api_key else None
+        self.client = None
+        if self.api_key:
+            try:
+                self.client = AsyncOpenAI(api_key=self.api_key)
+            except Exception as e:
+                logger.error(f"OpenAI API key noto'g'ri yoki topilmadi: {e}")
+                self.client = None
 
     async def analyze_metrics(self, account_data: dict, campaigns: list = None, yesterday_data: dict = None) -> str:
         """
@@ -69,7 +75,7 @@ class AIAnalyzer:
                 logger.error(f"OpenAI QA xatolik: {e}")
                 return "⚠️ OpenAI xatosi yuz berdi."
         else:
-            return "OpenAI ishlamayapti, AI analiz bera olmayman."
+            return "⚠️ OpenAI API key noto'g'ri yoki topilmadi. AI analiz bera olmayman."
 
     async def _openai_analyze(self, data: dict, campaigns: list = None, yesterday: dict = None) -> str:
         campaign_text = self._format_campaigns(campaigns) if campaigns else "Kampaniyalar ma'lumoti yo'q."

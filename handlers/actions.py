@@ -7,6 +7,7 @@ import re
 from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from services.meta_actions_service import MetaActionsService
+from services.ai_analyzer import AIAnalyzer
 from config.settings import ADMIN_ID
 from utils.logger import logger
 
@@ -128,7 +129,9 @@ async def handle_action_request(message: types.Message) -> bool:
     if not is_admin(message.from_user.id):
         return False
 
-    request = detect_action_request(message.text)
+    ai = AIAnalyzer()
+    request = await ai.parse_action_intent(message.text)
+    
     if not request:
         return False
 

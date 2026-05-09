@@ -195,6 +195,55 @@ FORMAT:
             max_tokens=800, temperature=0.7
         )
         return resp.choices[0].message.content.strip()
+    async def parse_action_intent(self, text: str) -> dict | None:
+        """
+        Foydalanuvchi xabaridan action intentni aniqlaydi.
+        Returns JSON-like dict or None.
+        {"action": "pause/enable/budget", "obj_type": "campaigns/adsets/ads", "query": "name", "budget": 12.5}
+        """
+        if not self.client:
+            return None
+
+        prompt = f"""Foydalanuvchi quyidagi matnni yozdi: "{text}"
+        
+Vazifa: Bu matn Meta Ads kampaniyasini o'zgartirish (action) so'rovimi shuni aniqla.
+Agar bu action bo'lmasa, faqat "NONE" deb javob ber.
+
+Agar action bo'lsa, quyidagi JSON formatida javob ber (boshqa hech narsa yozma):
+{{
+    "action": "pause" yopi "enable" yoki "budget",
+    "obj_type": "campaigns" yoki "adsets" yoki "ads",
+    "query": "qidirilayotgan ob'ekt nomi (masalan: bazalt, remont, etc)",
+    "budget": (faqat budget o'zgarganda son qiymat, masalan: 20, yo'q bo'lsa null)
+}}
+
+Misollar:
+"bazalt kampaniyasini o'chir" -> {{"action": "pause", "obj_type": "campaigns", "query": "bazalt", "budget": null}}
+"remont adsetini yoq" -> {{"action": "enable", "obj_type": "adsets", "query": "remont", "budget": null}}
+"kafel uchun budgetni 50 dollar qil" -> {{"action": "budget", "obj_type": "campaigns", "query": "kafel", "budget": 50}}
+"bugungi statistikani ko'rsat" -> NONE
+"nima gap" -> NONE
+"""
+        try:
+            resp = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100, temperature=0.0
+            )
+            content = resp.choices[0].message.content.strip()
+            if content == "NONE":
+                return None
+            
+            import json
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                 content = content.split("```")[1].split("```")[0].strip()
+                 
+            return json.loads(content)
+        except Exception as e:
+            logger.error(f"Intent parsing error: {e}")
+            return None
 
     def _local_analyze(self, data: dict, campaigns: list = None) -> str:
         """OpenAI ulanmagan bo'lsa, oddiy lokal tahlil."""

@@ -108,32 +108,6 @@ async def monitor_ad_performance(bot: Bot):
         logger.error(f"Monitoring xatoligi: {e}")
 
 
-async def send_daily_summary(bot: Bot):
-    """Har kuni 21:00 da admin uchun kunlik yakuniy xulosa."""
-    if not ADMIN_ID:
-        return
-
-    try:
-        meta = MetaAdsService()
-        data = await meta.get_account_insights("today")
-        
-        if not data or data.get('spend', 0) == 0:
-            return
-
-        if data['ctr'] >= CTR_MIN_ALERT and data['leads'] > 0:
-            summary = (
-                f"✅ TARGET HOLATI YAXSHI\n\n"
-                f"Bugungi reklama natijalari normal.\n"
-                f"CPL nazoratda (${data['cpl']:.2f}), CTR yomon emas ({data['ctr']}%).\n\n"
-                f"💰 Spend: ${data['spend']:.2f}\n"
-                f"📩 Leads: {data['leads']}\n"
-                f"🎯 CPL: ${data['cpl']:.2f}"
-            )
-            await bot.send_message(chat_id=ADMIN_ID, text=summary)
-            logger.info("Admin'ga daily success summary yuborildi.")
-            
-    except Exception as e:
-        logger.error(f"Daily summary xatoligi: {e}")
 
 
 async def send_scheduled_report(bot: Bot):
@@ -190,13 +164,6 @@ def setup_scheduler(bot: Bot):
         id="hourly_monitoring", replace_existing=True
     )
 
-    # 4. Kunlik yakuniy summary (21:05)
-    scheduler.add_job(
-        send_daily_summary, "cron",
-        hour=21, minute=5, args=[bot],
-        id="daily_admin_summary", replace_existing=True
-    )
-
     scheduler.start()
 
     # Startup log
@@ -208,4 +175,3 @@ def setup_scheduler(bot: Bot):
     logger.info(f"📊 Guruh report: {group_times_str}")
     logger.info(f"🔐 Admin report scheduler started: {admin_times_str}")
     logger.info(f"🔍 Hourly monitoring: har 1 soatda")
-    logger.info(f"📋 Daily summary: 21:05")

@@ -1,96 +1,173 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from aiogram import Bot
-from config.settings import GROUP_ID, ADMIN_ID, TIMEZONE, REPORT_HOURS
+from datetime import datetime, timedelta
+import pytz
+from config.settings import (
+    GROUP_ID, ADMIN_ID, TIMEZONE, REPORT_HOURS,
+    CPL_MULTIPLIER_ALERT, CTR_MIN_ALERT, 
+    FREQUENCY_MAX_ALERT, CPM_INCREASE_ALERT,
+    ALERT_COOLDOWN_HOURS
+)
 from services.meta_ads_service import MetaAdsService
 from services.report_builder import build_target_report
+from services.ai_analyzer import AIAnalyzer
 from utils.logger import logger
 
+# Alert spam himoyasi uchun oxirgi alert vaqtini saqlash
+last_alert_time = None
 
-async def send_scheduled_report(bot: Bot):
+async def monitor_ad_performance(bot: Bot):
     """
-    Avtomatik hisobot:
-    - Real data bo'lsa → guruhga oddiy report yuboradi
-    - Real data bo'lmasa → guruhga HECH NARSA yubormasin
-    - Real data bo'lmasa → admin private chatga warning yuboradi
+    Har 1 soatda Meta Ads ma'lumotlarini tekshiradi.
+    Natija yomonlashsa ADMIN_ID ga alert yuboradi.
     """
-    if not GROUP_ID:
-        logger.warning("GROUP_ID sozlanmagan. Avtomatik hisobot yuborilmadi.")
+    global last_alert_time
+    
+    if not ADMIN_ID:
         return
 
     try:
-        from datetime import datetime
-        import pytz
+        # Spam protection check
+        tz = pytz.timezone(TIMEZONE)
+        now = datetime.now(tz)
+        
+        if last_alert_time and (now - last_alert_time) < timedelta(hours=ALERT_COOLDOWN_HOURS):
+            # Cooldown tugamagan bo'lsa tekshirib o'tirmaymiz
+            return
 
-        # Hozirgi soatni aniqlaymiz
+        meta = MetaAdsService()
+        data = await meta.get_account_insights("today")
+        yesterday_data = await meta.get_account_insights("yesterday")
+
+        if not data or data.get('spend', 0) == 0:
+            # Bugun xarajat yo'q bo'lsa yoki API ishlamasa alert bermaymiz
+            return
+
+        issues = []
+        
+        # 1. CPL check (kechagiga nisbatan 2 baravar oshgan bo'lsa)
+        if yesterday_data and yesterday_data.get('cpl', 0) > 0:
+            if data['cpl'] >= yesterday_data['cpl'] * CPL_MULTIPLIER_ALERT:
+                issues.append(f"CPL qimmatlashgan: ${data['cpl']} (Kechagi: ${yesterday_data['cpl']})")
+
+        # 2. CTR check (threshold dan past bo'lsa)
+        if data['ctr'] < CTR_MIN_ALERT:
+            issues.append(f"CTR juda past: {data['ctr']}% (Min: {CTR_MIN_ALERT}%)")
+
+        # 3. Frequency check (threshold dan oshsa)
+        if data['frequency'] > FREQUENCY_MAX_ALERT:
+            issues.append(f"Frequency yuqori: {data['frequency']} (Max: {FREQUENCY_MAX_ALERT})")
+
+        # 4. Spend bor, lekin lead yo'q
+        if data['spend'] > 10 and data['leads'] == 0:
+            issues.append(f"Spend bor (${data['spend']}), lekin lead yo'q (0 lead)")
+
+        # Agar muammolar bo'lsa - AI dan tahlil va tavsiya olamiz
+        if issues:
+            ai = AIAnalyzer()
+            ai_recommendations = await ai.generate_monitoring_alert(data, yesterday_data, issues)
+            
+            # Raqamlarni formatlash
+            impressions_fmt = f"{data['impressions']:,}".replace(",", " ")
+            reach_fmt = f"{data['reach']:,}".replace(",", " ")
+
+            alert_msg = (
+                f"⚠️ TARGET OGOHLANTIRISH\n\n"
+                f"📅 Davr: Bugun\n"
+                f"💰 Xarajat: ${data['spend']:.2f}\n"
+                f"📩 Leadlar: {data['leads']}\n"
+                f"🎯 CPL: ${data['cpl']:.2f}\n"
+                f"📈 CTR: {data['ctr']}%\n"
+                f"📉 CPM: ${data['cpm']:.2f}\n"
+                f"📍 Reach: {reach_fmt}\n"
+                f"🔄 Frequency: {data['frequency']}\n\n"
+                f"{ai_recommendations}"
+            )
+            
+            await bot.send_message(chat_id=ADMIN_ID, text=alert_msg)
+            last_alert_time = now
+            logger.info("Admin'ga target alert yuborildi.")
+
+    except Exception as e:
+        logger.error(f"Monitoring xatoligi: {e}")
+
+
+async def send_daily_summary(bot: Bot):
+    """
+    Har kuni 21:00 da admin uchun kunlik yakuniy xulosa yuboradi.
+    Agar natijalar yaxshi bo'lsa ham xabar beradi.
+    """
+    if not ADMIN_ID:
+        return
+
+    try:
+        meta = MetaAdsService()
+        data = await meta.get_account_insights("today")
+        
+        if not data or data.get('spend', 0) == 0:
+            return
+
+        # Agar muammolar yo'q bo'lsa (yaxshi natija)
+        # Soddaroq summary
+        if data['ctr'] >= CTR_MIN_ALERT and data['leads'] > 0:
+            summary = (
+                f"✅ TARGET HOLATI YAXSHI\n\n"
+                f"Bugungi reklama natijalari normal.\n"
+                f"CPL nazoratda (${data['cpl']:.2f}), CTR yomon emas ({data['ctr']}%).\n\n"
+                f"💰 Spend: ${data['spend']:.2f}\n"
+                f"📩 Leads: {data['leads']}\n"
+                f"🎯 CPL: ${data['cpl']:.2f}"
+            )
+            await bot.send_message(chat_id=ADMIN_ID, text=summary)
+            logger.info("Admin'ga daily success summary yuborildi.")
+            
+    except Exception as e:
+        logger.error(f"Daily summary xatoligi: {e}")
+
+
+async def send_scheduled_report(bot: Bot):
+    """Eski avtomatik hisobot logikasi (guruhga)."""
+    if not GROUP_ID: return
+
+    try:
         tz = pytz.timezone(TIMEZONE)
         current_hour = datetime.now(tz).hour
-
-        # Agar ertalab 9:00 bo'lsa, kechagi kun hisobotini tashlaymiz
         period = "yesterday" if current_hour < 12 else "today"
 
-        # Avval real data borligini tekshiramiz
         meta = MetaAdsService()
         data = await meta.get_account_insights(period)
 
         if data is None:
-            # Real data olinmadi — guruhga HECH NARSA yubormaymiz
-            logger.warning(f"⚠️ Avtomatik hisobot: Real data olinmadi ({period}). Guruhga yuborilmadi.")
-
-            # Faqat admin private chatga warning yuboramiz
-            if ADMIN_ID:
-                warning_msg = (
-                    f"⚠️ Avtomatik hisobot ogohlantirishi\n\n"
-                    f"📅 Vaqt: {datetime.now(tz).strftime('%d.%m.%Y %H:%M')}\n"
-                    f"📊 Davr: {period}\n\n"
-                    f"❌ Real Meta Ads data olinmadi.\n"
-                    f"Guruhga hisobot yuborilmadi.\n\n"
-                    f"Tekshiring:\n"
-                    f"• META_ACCESS_TOKEN\n"
-                    f"• META_AD_ACCOUNT_ID\n"
-                    f"• Meta API holati"
-                )
-                try:
-                    await bot.send_message(chat_id=ADMIN_ID, text=warning_msg)
-                    logger.info("Admin'ga warning xabari yuborildi.")
-                except Exception as admin_err:
-                    logger.error(f"Admin'ga warning yuborishda xato: {admin_err}")
+            logger.warning(f"⚠️ Real data olinmadi ({period}). Guruhga yuborilmadi.")
             return
 
-        # Real data bor — guruhga oddiy report yuboramiz
         report = await build_target_report(period, is_admin=False, include_analysis=False)
         await bot.send_message(chat_id=GROUP_ID, text=report)
         logger.info(f"✅ Avtomatik oddiy hisobot guruhga yuborildi ({period}).")
 
     except Exception as e:
-        logger.error(f"❌ Avtomatik hisobot yuborishda xatolik: {e}")
-
-        # Xatolik bo'lsa ham admin'ga xabar beramiz
-        if ADMIN_ID:
-            try:
-                await bot.send_message(
-                    chat_id=ADMIN_ID,
-                    text=f"❌ Avtomatik hisobot xatoligi:\n{e}"
-                )
-            except Exception:
-                pass
+        logger.error(f"❌ Avtomatik hisobot xatoligi: {e}")
 
 
 def setup_scheduler(bot: Bot):
-    """Scheduler ni sozlash — har kuni belgilangan vaqtlarda avtomatik hisobot."""
+    """Scheduler ni sozlash."""
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
 
-    # 09:00, 15:00, 21:00 uchun
+    # 1. Guruhga hisobotlar (09:00, 15:00, 21:00)
     for hour in REPORT_HOURS:
         scheduler.add_job(
-            send_scheduled_report,
-            "cron",
-            hour=hour,
-            minute=0,
-            args=[bot],
-            id=f"daily_report_{hour}",
-            replace_existing=True,
+            send_scheduled_report, "cron", hour=hour, minute=0, args=[bot], id=f"group_report_{hour}"
         )
 
+    # 2. Har 1 soatda performance monitoring (admin uchun)
+    scheduler.add_job(
+        monitor_ad_performance, "interval", hours=1, args=[bot], id="hourly_monitoring"
+    )
+
+    # 3. Kunlik yakuniy summary (21:00)
+    scheduler.add_job(
+        send_daily_summary, "cron", hour=21, minute=5, args=[bot], id="daily_admin_summary"
+    )
+
     scheduler.start()
-    hours_str = ", ".join(f"{h}:00" for h in REPORT_HOURS)
-    logger.info(f"📅 Scheduler ishga tushdi ({hours_str} {TIMEZONE})")
+    logger.info(f"📅 Monitoring Scheduler ishga tushdi ({TIMEZONE})")

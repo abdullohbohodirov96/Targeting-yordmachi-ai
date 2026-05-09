@@ -160,6 +160,42 @@ Faqatgina umumiy kreativ yozish, reels ssenariy, target sozlamalari, marketing m
         )
         return resp.choices[0].message.content.strip()
 
+    async def generate_monitoring_alert(self, data: dict, yesterday: dict, issues: list) -> str:
+        """
+        Target natijalari yomonlashganida alert uchun AI tahlil va tavsiyalar yaratadi.
+        """
+        if not self.client:
+            return "⚠️ AI ulanmagan. Iltimos, natijalarni qo'lda tekshiring."
+
+        issues_text = "\n".join([f"- {i}" for i in issues])
+        
+        prompt = f"""DIQQAT: Target natijalarida muammo aniqlandi!
+        
+ANIQLANGAN MUAMMOLAR:
+{issues_text}
+
+BUGUNGI REAL DATA: 
+Spend: ${data.get('spend')}, Leads: {data.get('leads')}, CPL: ${data.get('cpl')}, CTR: {data.get('ctr')}%, CPM: ${data.get('cpm')}, Freq: {data.get('frequency')}
+
+KECHAGI DATA:
+CPL: ${yesterday.get("cpl") if yesterday else "Noma'lum"}
+
+VAZIFA: 
+1. Ushbu muammolarni Dunyabunya (qurilish materiallari) kontekstida qisqa tahlil qil.
+2. Amaliy va aniq 5 ta tavsiya ber (qaysi mahsulot/creative/audience test qilish kerak).
+3. Faqat real raqamlar asosida gapir.
+
+FORMAT:
+🧠 AI xulosa: (qisqa)
+🏗 Dunyabunya uchun tavsiya: (5 ta bullet point)"""
+
+        resp = await self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
+            max_tokens=800, temperature=0.7
+        )
+        return resp.choices[0].message.content.strip()
+
     def _local_analyze(self, data: dict, campaigns: list = None) -> str:
         """OpenAI ulanmagan bo'lsa, oddiy lokal tahlil."""
         if not data:

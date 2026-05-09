@@ -8,78 +8,128 @@ from utils.logger import logger
 
 router = Router()
 
+
+# === HELPERS ===
+
 def is_admin(user_id: int) -> bool:
     return ADMIN_ID is not None and user_id == ADMIN_ID
 
-# Optimization/Secret keywords (admin only)
+def is_private_chat(message: types.Message) -> bool:
+    return message.chat.type == "private"
+
+def is_group_chat(message: types.Message) -> bool:
+    return message.chat.type in ["group", "supergroup"]
+
+
+# === ADMIN-ONLY KEYWORDS ===
+# Bu so'zlar ishlatilsa, faqat admin javob oladi
+
 ADMIN_ONLY_KEYWORDS = [
-    "analyze", "tahlil", "optimization", "optimizatsiya", 
-    "recommendation", "tavsiya", "yaxshi", "yomon", "eng yaxshi",
-    "eng yomon", "o'chirish", "yoqish", "lead sifati", "quality",
-    "campaign analysis", "maxfiy", "confidential"
+    "analyze", "tahlil", "optimization", "optimizatsiya",
+    "recommendation", "tavsiya", "eng yaxshi", "eng yomon",
+    "o'chirish kerak", "scale qilish", "lead sifati", "quality",
+    "campaign analysis", "maxfiy", "confidential",
+    "qaysi kampaniya", "budget oshir", "budget kamayir",
+    "target o'zgartir", "audience almashir", "creative fatigue",
 ]
+
+# Oddiy user private chatda statistika so'raganda bloklash uchun
+STATS_KEYWORDS = [
+    "statistika", "hisobot", "report", "natija",
+    "cpl", "spend", "xarajat", "lead", "ctr", "cpm",
+    "campaign", "kampaniya", "analyze", "tahlil",
+    "target natija", "reklama natija", "ads data",
+]
+
 
 @router.message(F.text)
 async def handle_text_message(message: types.Message):
-    text = message.text.lower()
+    text = message.text.strip()
+    text_lower = text.lower()
     user_id = message.from_user.id
-    is_user_admin = is_admin(user_id)
-    is_private = message.chat.type == "private"
+    user_admin = is_admin(user_id)
+    private = is_private_chat(message)
+    group = is_group_chat(message)
 
-    # 1. Sana bo'yicha statistika so'rovi (Natural Language)
-    if is_date_request(text):
-        date_data = parse_date_request(text)
+    # ============================================
+    # 1. NATURAL LANGUAGE DATE REQUEST
+    # ============================================
+    if is_date_request(text_lower):
+        date_data = parse_date_request(text_lower)
         if date_data:
+            # Oddiy user private chatda — statistika taqiqlangan
+            if private and not user_admin:
+                await message.answer(
+                    "❌ Uzr, private chatda bu ma'lumotlar faqat admin uchun mavjud.\n\n"
+                    "📊 Statistikani guruhda olishingiz mumkin."
+                )
+                return
+
             await message.answer("⏳ Ma'lumot qidirilmoqda...")
-            
-            # Admin mode: faqat private chatda va admin bo'lsa
-            admin_mode = is_user_admin and is_private
-            
+
+            # Admin private: full report, guruh: public KPI
+            admin_mode = user_admin and private
+
             if "period" in date_data:
                 report = await build_target_report(
-                    period=date_data["period"], 
-                    is_admin=admin_mode, 
+                    period=date_data["period"],
+                    is_admin=admin_mode,
                     include_analysis=admin_mode
                 )
             else:
                 report = await build_target_report(
-                    since=date_data["since"], 
-                    until=date_data["until"], 
-                    is_admin=admin_mode, 
+                    since=date_data["since"],
+                    until=date_data["until"],
+                    is_admin=admin_mode,
                     include_analysis=admin_mode
                 )
             await message.answer(report)
             return
 
-    # 2. Maxfiy/Optimization savollar (Faqat admin uchun)
-    is_confidential = any(kw in text for kw in ADMIN_ONLY_KEYWORDS)
-    if is_confidential and not is_user_admin:
-        await message.answer("Uzr, bu ma'lumot va tahlillar faqat admin uchun mavjud.")
+    # ============================================
+    # 2. ODDIY USER PRIVATE CHATDA STATISTIKA SO'RASA — BLOKLASH
+    # ============================================
+    if private and not user_admin:
+        is_stats_request = any(kw in text_lower for kw in STATS_KEYWORDS)
+        if is_stats_request:
+            await message.answer(
+                "❌ Uzr, private chatda bu ma'lumotlar faqat admin uchun mavjud.\n\n"
+                "📊 Statistikani guruhda olishingiz mumkin.\n"
+                "🎬 Bu yerda kreativ, reels, caption, hook so'rashingiz mumkin."
+            )
+            return
+
+    # ============================================
+    # 3. MAXFIY ADMIN-ONLY SAVOLLAR (private va guruhda)
+    # ============================================
+    is_confidential = any(kw in text_lower for kw in ADMIN_ONLY_KEYWORDS)
+    if is_confidential and not user_admin:
+        await message.answer("❌ Bu funksiya faqat admin uchun mavjud.")
         return
 
-    # 3. AI Assistant bilan muloqot
-    # Faqat savolga o'xshash yoki marketing mavzusidagi xabarlarga javob beradi
-    # (AIAnalyzer ichida IGNORE logikasi bor)
+    # ============================================
+    # 4. AI ASSISTANT
+    # ============================================
     ai = AIAnalyzer()
     meta = MetaAdsService()
-    
-    # Kontekst uchun bugungi data (admin bo'lsa)
+
+    # Admin uchun real data kontekstini beramiz
     account_data = None
     campaigns = None
     yesterday_data = None
-    
-    if is_user_admin:
+
+    if user_admin:
         account_data = await meta.get_account_insights("today")
         campaigns = await meta.get_campaign_insights("today")
         yesterday_data = await meta.get_account_insights("yesterday")
 
     answer = await ai.answer_question(
-        question=message.text,
+        question=text,
         account_data=account_data,
         campaigns=campaigns,
         yesterday_data=yesterday_data,
-        is_admin=is_user_admin
+        is_admin=user_admin
     )
-    
+
     if answer and answer != "IGNORE":
         await message.answer(answer)

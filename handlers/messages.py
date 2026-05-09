@@ -3,6 +3,7 @@ from services.ai_analyzer import AIAnalyzer
 from services.report_builder import build_target_report
 from services.meta_ads_service import MetaAdsService
 from services.date_parser import is_date_request, parse_date_request
+from handlers.actions import handle_action_request
 from config.settings import ADMIN_ID
 from utils.logger import logger
 
@@ -100,7 +101,15 @@ async def handle_text_message(message: types.Message):
             return
 
     # ============================================
-    # 3. MAXFIY ADMIN-ONLY SAVOLLAR (private va guruhda)
+    # 3. ADMIN ACTION REQUESTS (pause/enable/budget)
+    # ============================================
+    if user_admin:
+        handled = await handle_action_request(message)
+        if handled:
+            return
+
+    # ============================================
+    # 4. MAXFIY ADMIN-ONLY SAVOLLAR (private va guruhda)
     # ============================================
     is_confidential = any(kw in text_lower for kw in ADMIN_ONLY_KEYWORDS)
     if is_confidential and not user_admin:
@@ -108,7 +117,7 @@ async def handle_text_message(message: types.Message):
         return
 
     # ============================================
-    # 4. AI ASSISTANT
+    # 5. AI ASSISTANT
     # ============================================
     ai = AIAnalyzer()
     meta = MetaAdsService()

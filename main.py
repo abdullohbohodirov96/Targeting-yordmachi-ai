@@ -5,7 +5,7 @@ from config.settings import (
     META_ACCESS_TOKEN, META_AD_ACCOUNT_ID
 )
 from utils.logger import logger
-from handlers import commands, messages
+from handlers import commands, messages, actions
 from services.scheduler import setup_scheduler
 
 
@@ -31,6 +31,7 @@ async def main():
 
     dp.include_router(commands.router)
     dp.include_router(messages.router)
+    dp.include_router(actions.router)
 
     setup_scheduler(bot)
 

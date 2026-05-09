@@ -42,6 +42,13 @@ STATS_KEYWORDS = [
     "target natija", "reklama natija", "ads data",
 ]
 
+# AI Marketing Assistant so'zlari (Bular kelsa hecham Action qilinmaydi)
+MARKETING_KEYWORDS = [
+    "creative", "ssenariy", "hook", "caption", "reklama matni", 
+    "target tavsiya", "audience", "marketing yordam", "strategiya",
+    "g'oya", "maslahat"
+]
+
 
 @router.message(F.text)
 async def handle_text_message(message: types.Message):
@@ -53,63 +60,65 @@ async def handle_text_message(message: types.Message):
     group = is_group_chat(message)
 
     # ============================================
-    # 1. NATURAL LANGUAGE DATE REQUEST
+    # 1. AI MARKETING ASSISTANT (Highest Priority)
     # ============================================
-    if is_date_request(text_lower):
-        date_data = parse_date_request(text_lower)
-        if date_data:
-            # Oddiy user private chatda — statistika taqiqlangan
-            if private and not user_admin:
+    is_marketing_request = any(kw in text_lower for kw in MARKETING_KEYWORDS)
+    
+    # Agar sof marketing savoli bo'lsa, action va stats ni o'tkazib yuboramiz
+    if not is_marketing_request:
+        # ============================================
+        # 2. ADMIN ACTION REQUESTS (pause/enable/budget/create/duplicate)
+        # ============================================
+        if user_admin:
+            handled = await handle_action_request(message)
+            if handled:
+                return
+
+        # ============================================
+        # 3. META STATS (Date requests)
+        # ============================================
+        if is_date_request(text_lower):
+            date_data = parse_date_request(text_lower)
+            if date_data:
+                if private and not user_admin:
+                    await message.answer(
+                        "❌ Uzr, private chatda bu ma'lumotlar faqat admin uchun mavjud.\n\n"
+                        "📊 Statistikani guruhda olishingiz mumkin."
+                    )
+                    return
+
+                await message.answer("⏳ Ma'lumot qidirilmoqda...")
+                admin_mode = user_admin and private
+
+                if "period" in date_data:
+                    report = await build_target_report(
+                        period=date_data["period"],
+                        is_admin=admin_mode,
+                        include_analysis=admin_mode
+                    )
+                else:
+                    report = await build_target_report(
+                        since=date_data["since"],
+                        until=date_data["until"],
+                        is_admin=admin_mode,
+                        include_analysis=admin_mode
+                    )
+                await message.answer(report)
+                return
+
+        # ODDIY USER PRIVATE CHATDA STATISTIKA SO'RASA — BLOKLASH
+        if private and not user_admin:
+            is_stats_request = any(kw in text_lower for kw in STATS_KEYWORDS)
+            if is_stats_request:
                 await message.answer(
                     "❌ Uzr, private chatda bu ma'lumotlar faqat admin uchun mavjud.\n\n"
-                    "📊 Statistikani guruhda olishingiz mumkin."
+                    "📊 Statistikani guruhda olishingiz mumkin.\n"
+                    "🎬 Bu yerda kreativ, reels, caption, hook so'rashingiz mumkin."
                 )
                 return
 
-            await message.answer("⏳ Ma'lumot qidirilmoqda...")
-
-            # Admin private: full report, guruh: public KPI
-            admin_mode = user_admin and private
-
-            if "period" in date_data:
-                report = await build_target_report(
-                    period=date_data["period"],
-                    is_admin=admin_mode,
-                    include_analysis=admin_mode
-                )
-            else:
-                report = await build_target_report(
-                    since=date_data["since"],
-                    until=date_data["until"],
-                    is_admin=admin_mode,
-                    include_analysis=admin_mode
-                )
-            await message.answer(report)
-            return
-
     # ============================================
-    # 2. ODDIY USER PRIVATE CHATDA STATISTIKA SO'RASA — BLOKLASH
-    # ============================================
-    if private and not user_admin:
-        is_stats_request = any(kw in text_lower for kw in STATS_KEYWORDS)
-        if is_stats_request:
-            await message.answer(
-                "❌ Uzr, private chatda bu ma'lumotlar faqat admin uchun mavjud.\n\n"
-                "📊 Statistikani guruhda olishingiz mumkin.\n"
-                "🎬 Bu yerda kreativ, reels, caption, hook so'rashingiz mumkin."
-            )
-            return
-
-    # ============================================
-    # 3. ADMIN ACTION REQUESTS (pause/enable/budget)
-    # ============================================
-    if user_admin:
-        handled = await handle_action_request(message)
-        if handled:
-            return
-
-    # ============================================
-    # 4. MAXFIY ADMIN-ONLY SAVOLLAR (private va guruhda)
+    # 4. MAXFIY ADMIN-ONLY SAVOLLAR
     # ============================================
     is_confidential = any(kw in text_lower for kw in ADMIN_ONLY_KEYWORDS)
     if is_confidential and not user_admin:
@@ -117,12 +126,11 @@ async def handle_text_message(message: types.Message):
         return
 
     # ============================================
-    # 5. AI ASSISTANT
+    # 5. AI ASSISTANT (Fallback & Marketing)
     # ============================================
     ai = AIAnalyzer()
     meta = MetaAdsService()
 
-    # Admin uchun real data kontekstini beramiz
     account_data = None
     campaigns = None
     yesterday_data = None

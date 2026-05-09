@@ -140,3 +140,91 @@ async def build_campaigns_report(period: str) -> str:
     except Exception as e:
         logger.error(f"Campaign report xato: {e}")
         return f"❌ Xato: {e}"
+
+
+async def build_admin_full_report(report_time: str) -> str:
+    """
+    Admin uchun to'liq scheduled report.
+    report_time: "09:00", "13:00", "18:00" formatda.
+    Returns: KPI + AI tahlil + Dunyabunya takliflar yoki warning.
+    """
+    try:
+        meta = MetaAdsService()
+        ai = AIAnalyzer()
+
+        data = await meta.get_account_insights("today")
+        if data is None:
+            return (
+                f"❌ Real Meta Ads ma'lumot topilmadi.\n"
+                f"🕐 Hisobot vaqti: {report_time}\n\n"
+                f"Hisobot yuborilmadi. API yoki credentials tekshiring."
+            )
+
+        yesterday_data = await meta.get_account_insights("yesterday")
+        campaigns_result = await meta.get_campaign_insights("today")
+        campaigns = campaigns_result if campaigns_result is not None else []
+
+        date_range_text = meta.get_date_range_text("today")
+
+        # Raqamlarni formatlash
+        impressions_fmt = f"{data['impressions']:,}".replace(",", " ")
+        reach_fmt = f"{data['reach']:,}".replace(",", " ")
+
+        # CPL
+        if data['leads'] > 0 and data['spend'] > 0:
+            cpl_text = f"${data['cpl']:.2f}"
+        elif data['leads'] == 0 and data['spend'] > 0:
+            cpl_text = "hisoblab bo'lmadi (lead yo'q)"
+        else:
+            cpl_text = "$0.00"
+
+        # Hisobot konteksti
+        time_context = {
+            "09": "Ertalabki holat va bugungi ish rejasi",
+            "13": "Kunning o'rtasidagi natija va tezkor optimizatsiya",
+            "18": "Kun yakuni oldidan holat va ertangi tavsiyalar",
+        }
+        hour_key = report_time.split(":")[0]
+        context_label = time_context.get(hour_key, "Joriy holat")
+
+        # KPI qismi
+        report = (
+            f"📊 ADMIN TARGET HISOBOTI\n\n"
+            f"📅 Davr: {date_range_text}\n"
+            f"🕐 Hisobot vaqti: {report_time}\n"
+            f"📝 {context_label}\n"
+            f"🟢 Real Data\n\n"
+            f"💰 Xarajat: ${data['spend']:.2f}\n"
+            f"📩 Leadlar: {data['leads']}\n"
+            f"💬 Xabarlar: {data['messages']}\n"
+            f"🎯 CPL: {cpl_text}\n"
+            f"📈 CTR: {data['ctr']}%\n"
+            f"🖱 CPC: ${data['cpc']:.2f}\n"
+            f"📉 CPM: ${data['cpm']:.2f}\n"
+            f"👁 Impressions: {impressions_fmt}\n"
+            f"📍 Reach: {reach_fmt}\n"
+            f"🔄 Frequency: {data['frequency']}"
+        )
+
+        # Kampaniya qismi
+        if campaigns:
+            best = max(campaigns, key=lambda c: c.get("leads", 0))
+            worst = min(campaigns, key=lambda c: c.get("ctr", 999))
+            report += (
+                f"\n\n🔥 Eng yaxshi kampaniya:\n{best.get('campaign_name', '—')}\n"
+                f"⚠️ Eng yomon kampaniya:\n{worst.get('campaign_name', '—')}"
+            )
+
+        # AI tahlil + takliflar
+        try:
+            analysis = await ai.analyze_metrics(data, campaigns, yesterday_data)
+            report += f"\n\n🧠 AI Tahlil:\n{analysis}"
+        except Exception as e:
+            logger.error(f"Admin full report AI xato: {e}")
+            report += "\n\n🧠 AI Tahlil:\nHozircha mavjud emas."
+
+        return report
+
+    except Exception as e:
+        logger.error(f"Admin full report xato: {e}")
+        return f"❌ Admin hisobot xatosi: {e}"

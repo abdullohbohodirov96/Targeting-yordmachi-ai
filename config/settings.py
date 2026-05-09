@@ -37,6 +37,16 @@ GOOGLE_CREDENTIALS_JSON = os.getenv("GOOGLE_CREDENTIALS_JSON") # Sheets API uchu
 # === SCHEDULER ===
 TIMEZONE = "Asia/Tashkent"
 REPORT_HOURS = [9, 15, 21]
+
+# === ADMIN REPORT SCHEDULER ===
+# Env: ADMIN_REPORT_TIMES=09:00,13:00,18:00
+_admin_times_raw = os.getenv("ADMIN_REPORT_TIMES", "09:00,13:00,18:00")
+ADMIN_REPORT_TIMES = []
+for t in _admin_times_raw.split(","):
+    t = t.strip()
+    if ":" in t:
+        parts = t.split(":")
+        ADMIN_REPORT_TIMES.append({"hour": int(parts[0]), "minute": int(parts[1])})
 # === MONITORING THRESHOLDS ===
 CPL_MULTIPLIER_ALERT = float(os.getenv("CPL_MULTIPLIER_ALERT", 2.0))
 CTR_MIN_ALERT = float(os.getenv("CTR_MIN_ALERT", 1.0))

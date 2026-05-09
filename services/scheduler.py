@@ -4,17 +4,42 @@ from datetime import datetime, timedelta
 import pytz
 from config.settings import (
     GROUP_ID, ADMIN_ID, TIMEZONE, REPORT_HOURS,
+    ADMIN_REPORT_TIMES,
     CPL_MULTIPLIER_ALERT, CTR_MIN_ALERT, 
     FREQUENCY_MAX_ALERT, CPM_INCREASE_ALERT,
     ALERT_COOLDOWN_HOURS
 )
 from services.meta_ads_service import MetaAdsService
-from services.report_builder import build_target_report
+from services.report_builder import build_target_report, build_admin_full_report
 from services.ai_analyzer import AIAnalyzer
 from utils.logger import logger
 
 # Alert spam himoyasi uchun oxirgi alert vaqtini saqlash
 last_alert_time = None
+
+
+async def send_admin_full_report(bot: Bot, report_time: str):
+    """
+    Admin uchun to'liq target hisobot + AI tahlil + takliflar.
+    Faqat ADMIN_ID ga private yuboriladi.
+    """
+    if not ADMIN_ID:
+        return
+
+    try:
+        report = await build_admin_full_report(report_time)
+        await bot.send_message(chat_id=ADMIN_ID, text=report)
+        logger.info(f"✅ Admin full report yuborildi ({report_time}).")
+    except Exception as e:
+        logger.error(f"❌ Admin full report yuborishda xato: {e}")
+        try:
+            await bot.send_message(
+                chat_id=ADMIN_ID,
+                text=f"❌ {report_time} hisobot yuborishda xatolik:\n{e}"
+            )
+        except Exception:
+            pass
+
 
 async def monitor_ad_performance(bot: Bot):
     """
@@ -27,12 +52,10 @@ async def monitor_ad_performance(bot: Bot):
         return
 
     try:
-        # Spam protection check
         tz = pytz.timezone(TIMEZONE)
         now = datetime.now(tz)
         
         if last_alert_time and (now - last_alert_time) < timedelta(hours=ALERT_COOLDOWN_HOURS):
-            # Cooldown tugamagan bo'lsa tekshirib o'tirmaymiz
             return
 
         meta = MetaAdsService()
@@ -40,34 +63,27 @@ async def monitor_ad_performance(bot: Bot):
         yesterday_data = await meta.get_account_insights("yesterday")
 
         if not data or data.get('spend', 0) == 0:
-            # Bugun xarajat yo'q bo'lsa yoki API ishlamasa alert bermaymiz
             return
 
         issues = []
         
-        # 1. CPL check (kechagiga nisbatan 2 baravar oshgan bo'lsa)
         if yesterday_data and yesterday_data.get('cpl', 0) > 0:
             if data['cpl'] >= yesterday_data['cpl'] * CPL_MULTIPLIER_ALERT:
                 issues.append(f"CPL qimmatlashgan: ${data['cpl']} (Kechagi: ${yesterday_data['cpl']})")
 
-        # 2. CTR check (threshold dan past bo'lsa)
         if data['ctr'] < CTR_MIN_ALERT:
             issues.append(f"CTR juda past: {data['ctr']}% (Min: {CTR_MIN_ALERT}%)")
 
-        # 3. Frequency check (threshold dan oshsa)
         if data['frequency'] > FREQUENCY_MAX_ALERT:
             issues.append(f"Frequency yuqori: {data['frequency']} (Max: {FREQUENCY_MAX_ALERT})")
 
-        # 4. Spend bor, lekin lead yo'q
         if data['spend'] > 10 and data['leads'] == 0:
             issues.append(f"Spend bor (${data['spend']}), lekin lead yo'q (0 lead)")
 
-        # Agar muammolar bo'lsa - AI dan tahlil va tavsiya olamiz
         if issues:
             ai = AIAnalyzer()
             ai_recommendations = await ai.generate_monitoring_alert(data, yesterday_data, issues)
             
-            # Raqamlarni formatlash
             impressions_fmt = f"{data['impressions']:,}".replace(",", " ")
             reach_fmt = f"{data['reach']:,}".replace(",", " ")
 
@@ -93,10 +109,7 @@ async def monitor_ad_performance(bot: Bot):
 
 
 async def send_daily_summary(bot: Bot):
-    """
-    Har kuni 21:00 da admin uchun kunlik yakuniy xulosa yuboradi.
-    Agar natijalar yaxshi bo'lsa ham xabar beradi.
-    """
+    """Har kuni 21:00 da admin uchun kunlik yakuniy xulosa."""
     if not ADMIN_ID:
         return
 
@@ -107,8 +120,6 @@ async def send_daily_summary(bot: Bot):
         if not data or data.get('spend', 0) == 0:
             return
 
-        # Agar muammolar yo'q bo'lsa (yaxshi natija)
-        # Soddaroq summary
         if data['ctr'] >= CTR_MIN_ALERT and data['leads'] > 0:
             summary = (
                 f"✅ TARGET HOLATI YAXSHI\n\n"
@@ -126,7 +137,7 @@ async def send_daily_summary(bot: Bot):
 
 
 async def send_scheduled_report(bot: Bot):
-    """Eski avtomatik hisobot logikasi (guruhga)."""
+    """Guruhga avtomatik oddiy KPI report."""
     if not GROUP_ID: return
 
     try:
@@ -153,21 +164,48 @@ def setup_scheduler(bot: Bot):
     """Scheduler ni sozlash."""
     scheduler = AsyncIOScheduler(timezone=TIMEZONE)
 
-    # 1. Guruhga hisobotlar (09:00, 15:00, 21:00)
+    # 1. Guruhga oddiy KPI hisobotlar (09:00, 15:00, 21:00)
     for hour in REPORT_HOURS:
         scheduler.add_job(
-            send_scheduled_report, "cron", hour=hour, minute=0, args=[bot], id=f"group_report_{hour}"
+            send_scheduled_report, "cron",
+            hour=hour, minute=0, args=[bot],
+            id=f"group_report_{hour}", replace_existing=True
         )
 
-    # 2. Har 1 soatda performance monitoring (admin uchun)
+    # 2. Admin uchun to'liq report + AI tahlil (09:00, 13:00, 18:00)
+    for time_cfg in ADMIN_REPORT_TIMES:
+        h = time_cfg["hour"]
+        m = time_cfg["minute"]
+        time_label = f"{h:02d}:{m:02d}"
+        scheduler.add_job(
+            send_admin_full_report, "cron",
+            hour=h, minute=m, args=[bot, time_label],
+            id=f"admin_report_{h}_{m}", replace_existing=True
+        )
+
+    # 3. Har 1 soatda performance monitoring
     scheduler.add_job(
-        monitor_ad_performance, "interval", hours=1, args=[bot], id="hourly_monitoring"
+        monitor_ad_performance, "interval",
+        hours=1, args=[bot],
+        id="hourly_monitoring", replace_existing=True
     )
 
-    # 3. Kunlik yakuniy summary (21:00)
+    # 4. Kunlik yakuniy summary (21:05)
     scheduler.add_job(
-        send_daily_summary, "cron", hour=21, minute=5, args=[bot], id="daily_admin_summary"
+        send_daily_summary, "cron",
+        hour=21, minute=5, args=[bot],
+        id="daily_admin_summary", replace_existing=True
     )
 
     scheduler.start()
-    logger.info(f"📅 Monitoring Scheduler ishga tushdi ({TIMEZONE})")
+
+    # Startup log
+    admin_times_str = ", ".join(
+        f"{t['hour']:02d}:{t['minute']:02d}" for t in ADMIN_REPORT_TIMES
+    )
+    group_times_str = ", ".join(f"{h}:00" for h in REPORT_HOURS)
+    logger.info(f"📅 Scheduler ishga tushdi ({TIMEZONE})")
+    logger.info(f"📊 Guruh report: {group_times_str}")
+    logger.info(f"🔐 Admin report scheduler started: {admin_times_str}")
+    logger.info(f"🔍 Hourly monitoring: har 1 soatda")
+    logger.info(f"📋 Daily summary: 21:05")

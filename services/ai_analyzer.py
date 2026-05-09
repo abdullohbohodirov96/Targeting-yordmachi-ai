@@ -199,7 +199,7 @@ FORMAT:
         """
         Foydalanuvchi xabaridan action intentni aniqlaydi.
         Returns JSON-like dict or None.
-        {"action": "pause/enable/budget", "obj_type": "campaigns/adsets/ads", "query": "name", "budget": 12.5}
+        {"action": "pause/enable/budget/create/duplicate", "obj_type": "campaigns/adsets/ads", "query": "name", "budget": 12.5}
         """
         if not self.client:
             return None
@@ -209,20 +209,32 @@ FORMAT:
 Vazifa: Bu matn Meta Ads kampaniyasini o'zgartirish (action) so'rovimi shuni aniqla.
 Agar bu action bo'lmasa, faqat "NONE" deb javob ber.
 
+Action turlari:
+1. "pause": o'chir, pause qil, to'xtat
+2. "enable": yoq, active qil, enable qil
+3. "budget": budgetni oshir, budgetni kamaytir, $20 qil, 15$ budget qo'y
+4. "create": yarat, och, create, new, yangi ad set, yangi campaign
+5. "duplicate": copy qil, duplicate qil, nusxa ol, clone qil
+
+Object turlari ("obj_type"):
+1. "campaigns": campaign, kampaniya
+2. "adsets": adset, ad set, auditoriya, target
+3. "ads": ad, reklama, e'lon
+
 Agar action bo'lsa, quyidagi JSON formatida javob ber (boshqa hech narsa yozma):
 {{
-    "action": "pause" yopi "enable" yoki "budget",
+    "action": "pause" yopi "enable" yoki "budget" yoki "create" yoki "duplicate",
     "obj_type": "campaigns" yoki "adsets" yoki "ads",
-    "query": "qidirilayotgan ob'ekt nomi (masalan: bazalt, remont, etc)",
+    "query": "qidirilayotgan ob'ekt nomi (masalan: bazalt, remont, activ). DIQQAT: 'target', 'ad set', 'campaign' so'zlarini query qilib olma, ular obj_type! Agar nom bo'lmasa: ''",
     "budget": (faqat budget o'zgarganda son qiymat, masalan: 20, yo'q bo'lsa null)
 }}
 
 Misollar:
-"bazalt kampaniyasini o'chir" -> {{"action": "pause", "obj_type": "campaigns", "query": "bazalt", "budget": null}}
-"remont adsetini yoq" -> {{"action": "enable", "obj_type": "adsets", "query": "remont", "budget": null}}
-"kafel uchun budgetni 50 dollar qil" -> {{"action": "budget", "obj_type": "campaigns", "query": "kafel", "budget": 50}}
+"bazalt campaign ichiga yangi ad set yarat" -> {{"action": "create", "obj_type": "adsets", "query": "bazalt", "budget": null}}
+"activ reklamani copy qilib yangi audience bilan yoq" -> {{"action": "duplicate", "obj_type": "ads", "query": "activ", "budget": null}}
+"eski targetni pause qil" -> {{"action": "pause", "obj_type": "adsets", "query": "eski", "budget": null}}
+"15$ budget qil" -> {{"action": "budget", "obj_type": "campaigns", "query": "", "budget": 15}}
 "bugungi statistikani ko'rsat" -> NONE
-"nima gap" -> NONE
 """
         try:
             resp = await self.client.chat.completions.create(

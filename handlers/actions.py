@@ -179,6 +179,8 @@ async def _send_confirmation(message_or_callback, obj: dict, action: str, budget
         "pause": "⏸ Pause (to'xtatish)",
         "enable": "▶️ Enable (yoqish)",
         "budget": f"💰 Budget o'zgartirish → ${budget}",
+        "create": "🆕 Yangi yaratish (Nusxa asosida)",
+        "duplicate": "📄 Duplicate (Nusxa olish)",
     }
     action_label = action_labels.get(action, action)
 
@@ -238,6 +240,8 @@ async def on_confirm(callback: types.CallbackQuery):
         result = await meta.update_status(obj_id, "ACTIVE", callback.from_user.id)
     elif action == "budget" and budget:
         result = await meta.update_budget(obj_id, budget, callback.from_user.id)
+    elif action in ["create", "duplicate"]:
+        result = await meta.duplicate_object(obj_id, callback.from_user.id)
     else:
         result = {"success": False, "message": "Noma'lum action"}
 

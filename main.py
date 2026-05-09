@@ -1,5 +1,6 @@
 import asyncio
 from aiogram import Bot, Dispatcher
+from aiogram.exceptions import TelegramConflictError
 from config.settings import (
     BOT_TOKEN, ADMIN_ID, OPENAI_API_KEY,
     META_ACCESS_TOKEN, META_AD_ACCOUNT_ID
@@ -36,8 +37,16 @@ async def main():
     setup_scheduler(bot)
 
     logger.info("✅ AI Target Assistant Started Successfully")
+    logger.info("🚀 Polling started. Make sure only one instance is running.")
+    logger.info("⚠️ RENDER NOTE: Ensure you only have 1 active worker/process to avoid polling conflicts.")
+    
+    # Eski webhookni o'chirish (Polling muammosini oldini olish uchun)
     await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+    
+    try:
+        await dp.start_polling(bot)
+    except TelegramConflictError:
+        logger.error("❌ Another bot instance is running. Stop duplicate Render/Railway/local service.")
 
 
 if __name__ == "__main__":

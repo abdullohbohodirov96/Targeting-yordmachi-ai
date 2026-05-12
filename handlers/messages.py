@@ -51,7 +51,17 @@ async def handle_text_message(message: types.Message):
     logger.info(f"Detected intent for '{text}': {intent}")
 
     # ============================================
-    # A) CREATIVE_TASK (Marketing AI Assistant)
+    # A) SEND_TO_GROUP (Guruhga xabar yuborish/Task) - HIGHEST PRIORITY
+    # ============================================
+    if intent == "SEND_TO_GROUP":
+        if not user_admin:
+            await message.answer("❌ Bu amal faqat admin uchun mavjud.")
+            return
+        await _process_group_task(message, text)
+        return
+
+    # ============================================
+    # B) CREATIVE_TASK (Marketing AI Assistant)
     # ============================================
     if intent == "CREATIVE_TASK":
         # Hech qanday Meta object qidirilmaydi, to'g'ridan-to'g'ri AI ga
@@ -59,7 +69,7 @@ async def handle_text_message(message: types.Message):
         return
 
     # ============================================
-    # B) META_STATS (Date/Statistika requests)
+    # C) META_STATS (Date/Statistika requests)
     # ============================================
     if intent == "META_STATS" or is_date_request(text_lower):
         if private and not user_admin:
@@ -102,7 +112,7 @@ async def handle_text_message(message: types.Message):
         return
 
     # ============================================
-    # C) META_ACTION (O'zgartirishlar, pause, budget)
+    # D) META_ACTION (O'zgartirishlar, pause, budget)
     # ============================================
     if intent == "META_ACTION":
         if not user_admin:
@@ -114,7 +124,7 @@ async def handle_text_message(message: types.Message):
             return
 
     # ============================================
-    # D) OBJECT_SEARCH (Faqat aniq qidiruv buyruqlari)
+    # E) OBJECT_SEARCH (Faqat aniq qidiruv buyruqlari)
     # ============================================
     if intent == "OBJECT_SEARCH":
         if not user_admin:
@@ -125,7 +135,7 @@ async def handle_text_message(message: types.Message):
         return
 
     # ============================================
-    # E) AI_CHAT / DEFAULT (Qolgan holatlar)
+    # F) AI_CHAT / DEFAULT (Qolgan holatlar)
     # ============================================
     is_confidential = any(kw in text_lower for kw in ADMIN_ONLY_KEYWORDS)
     if is_confidential and not user_admin:
@@ -158,6 +168,34 @@ async def _process_ai_chat(message: types.Message, text: str, user_admin: bool):
 
     if answer and answer != "IGNORE":
         await message.answer(answer)
+
+
+async def _process_group_task(message: types.Message, text: str):
+    from config.settings import GROUP_ID
+    
+    ai = AIAnalyzer()
+    # Taskni analiz qilish va guruhga mos formatga keltirish
+    await message.answer("🤖 Vazifa tahlil qilinmoqda...")
+    result = await ai.analyze_task(text)
+    
+    if result.get("can_do"):
+        if result.get("action") == "send_to_group":
+            if not GROUP_ID:
+                await message.answer("❌ GROUP_ID sozlanmagan. Xabar yubora olmayman.")
+                return
+            
+            formatted_text = result.get("formatted_text")
+            try:
+                await message.bot.send_message(chat_id=GROUP_ID, text=formatted_text)
+                await message.answer(f"✅ Guruhga yuborildi:\n\n{formatted_text}")
+            except Exception as e:
+                logger.error(f"Group send error: {e}")
+                await message.answer(f"❌ Xatolik yuz berdi: {e}")
+        else:
+            await message.answer(f"🤖 Task tahlili: {result.get('message')}")
+    else:
+        error_msg = result.get('message', 'Nomalum sabab')
+        await message.answer(f"❌ Kechirasiz, bu vazifani bajara olmayman: {error_msg}")
 
 
 async def _process_object_search(message: types.Message, text_lower: str):

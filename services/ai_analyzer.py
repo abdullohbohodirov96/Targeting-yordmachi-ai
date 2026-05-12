@@ -206,8 +206,11 @@ FORMAT:
 
         prompt = f"""Foydalanuvchi quyidagi matnni yozdi: "{text}"
         
-Vazifa: Bu matn Meta Ads kampaniyasini o'zgartirish (action) so'rovimi shuni aniqla.
-Agar bu action bo'lmasa, faqat "NONE" deb javob ber.
+Vazifa: Bu matn Meta Ads kampaniyasini o'zgartirish (action - pause, enable, budget, duplicate, create) so'rovimi shuni aniqla.
+Agar bu action bo'lmasa yoki aniq Meta ob'ekti (campaign, adset, ad) ko'rsatilmagan bo'lsa, faqat "NONE" deb javob ber.
+
+DIQQAT: Agar xabar marketing yordami (creative yozish, reels, ssenariy, caption, hook, strategiya) haqida bo'lsa, bu action EMAS! "NONE" deb javob ber.
+Agar xabar guruhga xabar yuborish haqida bo'lsa, bu action EMAS! "NONE" deb javob ber.
 
 Action turlari:
 1. "pause": o'chir, pause qil, to'xtat
@@ -256,6 +259,44 @@ Misollar:
         except Exception as e:
             logger.error(f"Intent parsing error: {e}")
             return None
+
+    async def analyze_task(self, text: str) -> dict:
+        """
+        Admin bergan vazifani analiz qiladi va bajarish rejasini tuzadi.
+        """
+        if not self.client:
+            return {"can_do": False, "message": "AI ulanmagan."}
+
+        prompt = f"""Foydalanuvchi (ADMIN) quyidagi vazifani berdi: "{text}"
+
+Sening vazifang bu topshiriqni tahlil qilish. Hozircha sen quyidagi ishlarni qila olasan:
+1. "send_to_group": Guruhga xabar yuborish (xabarni tahrirlab, chiroyli formatda, emojilar bilan).
+2. "marketing_advice": Marketing/kreativ bo'yicha maslahat berish.
+3. "meta_action": Reklamani o'chirish/yoqish/budget (lekin bu boshqa intentda).
+
+Agar topshiriq guruhga biror narsa yozish bo'lsa (masalan: "buni guruhga tashla", "guruhga bugungi natijani yoz", "mana buni guruhga chiroyli qilib yoz"), uni "send_to_group" deb belgilang va xabarni "formatted_text" maydoniga chiroyli qilib (emojilar bilan, marketing uslubida) yozing.
+
+Agar sen qila olmaydigan ish bo'lsa (masalan: "ovqat pishir", "mashina hayda"), "can_do": false deb qaytar.
+
+Javobni FAQAT JSON formatida qaytar:
+{{
+    "can_do": true/false,
+    "action": "send_to_group" yoki "marketing_advice" yoki "none",
+    "formatted_text": "guruhga yuboriladigan tayyor matn (agar bo'lsa, aks holda bo'sh)",
+    "message": "admin uchun javob/tushuntirish"
+}}
+"""
+        try:
+            resp = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
+                max_tokens=1000, temperature=0.3, response_format={ "type": "json_object" }
+            )
+            import json
+            return json.loads(resp.choices[0].message.content.strip())
+        except Exception as e:
+            logger.error(f"Task analysis error: {e}")
+            return {"can_do": False, "message": f"Xatolik: {e}"}
 
     def _local_analyze(self, data: dict, campaigns: list = None) -> str:
         """OpenAI ulanmagan bo'lsa, oddiy lokal tahlil."""

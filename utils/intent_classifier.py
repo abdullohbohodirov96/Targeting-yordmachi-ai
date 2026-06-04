@@ -1,58 +1,181 @@
 """
-Natural Language Intent Classifier.
-Ruxsat etilgan intentlar:
-- CREATIVE_TASK (Marketing yordam, AI)
-- META_STATS (Statistika)
-- META_ACTION (O'zgartirishlar, pause, budget, vs)
-- OBJECT_SEARCH (Faqat aniq qidiruv buyruqlari)
-- AI_CHAT (Qolgan holatlar)
+Aqlli Natural Language Intent Classifier.
+O'zbek, Rus va Ingliz tillarida ishlaydi.
+Har qanday so'z shaklini tushunadi.
+
+Intentlar:
+- SEND_TO_GROUP  : Guruhga xabar yuborish
+- CREATIVE_TASK  : Marketing/kreativ yordam
+- META_STATS     : Statistika va hisobotlar
+- META_ACTION    : Kampaniya boshqaruvi (pause, enable, budget)
+- OBJECT_SEARCH  : Kampaniya/adset/reklama qidirish
+- AI_CHAT        : Umumiy savol-javob
 """
 
-def detect_intent(text: str) -> str:
-    text_lower = text.lower()
 
-    # 1. SEND_TO_GROUP (Guruhga xabar yuborish / Task) - Highest Priority
-    group_keywords = [
-        "guruhga yoz", "guruhga tashla", "guruhga yubor", "send to group", "post qil", "kanalga yoz",
-        "vazifa", "topshiriq"
+def detect_intent(text: str) -> str:
+    t = text.lower().strip()
+
+    # ── 1. SEND_TO_GROUP (eng yuqori prioritet) ─────────────────────────
+    group_kw = [
+        "guruhga yoz", "guruhga tashla", "guruhga yubor", "guruhga chiqar",
+        "guruhga e'lon", "guruhga post", "send to group", "post qil",
+        "kanalga yoz", "kanalga tashla", "publiklash", "publish qil",
+        "guruhga jo'nat", "guruhga berish", "hammaga yoz",
     ]
-    if any(kw in text_lower for kw in group_keywords):
+    if any(kw in t for kw in group_kw):
         return "SEND_TO_GROUP"
 
-    # 2. CREATIVE / MARKETING (AI Advice)
-    creative_keywords = [
-        "creative", "kreativ", "ssenariy", "reels", "hook", "caption", 
-        "matn", "reklama matni", "g'oya", "idea", "yozib ber", "tuzib ber", 
-        "qilib ber", "maslahat ber", "audience ber", "target setting ber"
+    # ── 2. META_ACTION (aniq harakat so'zlari — yuqori prioritet) ───────
+    # "pause", "o'chir", "yoq", "budget", "copy" kabi qat'iy harakat so'zlari
+    action_kw = [
+        # Pause / O'chirish
+        "o'chir", "o'chirish", "o'chirib", "ochirsin", "o'chirilsin",
+        "pauza", "pause qil", "pause ber", "pauselan", "to'xtat", "to'xtatish",
+        "stop qil", "stopla", "stoplan",
+        # Enable / Yoqish
+        "yoq", "yoqish", "yoqilsin", "qayta yoq", "active qil", "aktivlashtir",
+        "enable qil", "ishga tushir", "run qil", "launchla",
+        # Budget
+        "budget qo'y", "budjetni oshir", "budgetni oshir", "budgetni kamaytir",
+        "budjetni kamaytir", "budget o'zgartir", "budjetni o'zgartir",
+        "budget bel", "byudjet qo'y", "$ qil", "dollar qil", "budget yoz",
+        # Copy / Duplicate
+        "copy qil", "duplicate qil", "nusxa ol", "clone qil", "ko'paytir",
+        "nusxala", "dublikat", "copy ber",
+        # Create
+        "yangi adset yarat", "yangi kampaniya yarat", "yangi reklama yarat",
+        "yangi target yarat", "yaratib ber",
     ]
-    if any(kw in text_lower for kw in creative_keywords):
-        return "CREATIVE_TASK"
-
-    # 3. META_STATS (Statistika)
-    stats_keywords = [
-        "statistika", "hisobot", "report", "natija", "bugun", "kecha", "hafta", "oy"
-    ]
-    if any(kw in text_lower for kw in stats_keywords):
-        return "META_STATS"
-
-    # 4. META_ACTION (O'zgartirishlar - strictly for Meta objects)
-    # "qil" so'zi judayam ko'p uchraydi, uni olib tashlaymiz yoki faqat kombinatsiyada qoldiramiz
-    action_keywords = [
-        "o'chir", "pause qil", "to'xtat", "yoq", "active qil", "enable qil",
-        "budgetni oshir", "budgetni kamaytir", "budget qo'y",
-        "copy qil", "duplicate qil", "nusxa ol", "clone qil",
-        "yarat", "och", "new", "yangi ad set", "yangi campaign"
-    ]
-    # "create" o'rniga "create " (space bilan) yoki boshqa usul
-    if any(kw in text_lower for kw in action_keywords) or "create" in text_lower.split():
+    if any(kw in t for kw in action_kw):
         return "META_ACTION"
 
-    # 5. OBJECT_SEARCH (Faqat aniq buyruqlar)
-    search_prefixes = [
-        "adset qidir:", "campaign qidir:", "ads qidir:", "reklamani top:"
+    # "X ni o'chir" yoki "X targetni yoq" pattern — regex-less approach
+    # Agar "create" alohida so'z bo'lsa (not inside "creative")
+    words = t.split()
+    if "create" in words:
+        return "META_ACTION"
+
+    # ── 3. CREATIVE_TASK ────────────────────────────────────────────────
+    creative_kw = [
+        "creative", "kreativ", "kreatif",
+        "ssenariy", "skript", "script", "stsenariy",
+        "reels", "rils", "tiktok", "shorts",
+        "hook", "xuk", "caption", "kepshn",
+        "matn yoz", "matn yozib", "reklama matni", "ad matn",
+        "g'oya ber", "idea ber", "g'oyalar", "ideyalar",
+        "yozib ber", "tuzib ber", "qilib ber",
+        "maslahat ber", "tavsiya ber",
+        "ad copy", "content plan", "kontentplan",
+        "dm script", "dm skript", "sales script",
+        "oferta yoz", "taklifnoma",
+        "taglayn", "slogan", "headline",
+        "post yoz", "post tayyorla", "hikoya yoz",
+        "reklama matni", "reklama yoz",
+        "targeting maslahat", "audience maslahat",
     ]
-    if any(text_lower.startswith(prefix) for prefix in search_prefixes):
+    if any(kw in t for kw in creative_kw):
+        return "CREATIVE_TASK"
+
+    # ── 4. META_STATS ───────────────────────────────────────────────────
+    stats_kw = [
+        "statistika", "statka", "stats",
+        "hisobot", "report", "repport",
+        "natija", "natijalar", "ko'rsatkich", "performance",
+        "bugun", "kecha", "hafta", "oy", "oylik", "haftalik",
+        "spend", "xarajat", "sarflash",
+        "cpl", "ctr", "cpm", "roas", "roi",
+        "leads", "lead soni", "lid",
+        "kampaniya natija", "reklama natija", "ads natija",
+        "qancha ketdi", "qancha ishlandi", "pul sarflandi",
+        # Russian
+        "статистика", "отчет", "результат",
+        "сегодня", "вчера", "неделю", "месяц",
+    ]
+    if any(kw in t for kw in stats_kw):
+        return "META_STATS"
+
+    # ── 5. OBJECT_SEARCH ────────────────────────────────────────────────
+    # Aniq prefikslar
+    search_prefixes = [
+        "adset qidir:", "campaign qidir:", "ads qidir:",
+        "reklamani top:", "target qidir:", "kampaniya qidir:",
+        "reklama qidir:", "adset top:", "kampaniyani top:",
+    ]
+    if any(t.startswith(p) for p in search_prefixes):
         return "OBJECT_SEARCH"
 
-    # 6. Default
+    # Tabiiy til qidiruv: qidiruv fe'li bor bo'lsa
+    search_verbs = [
+        "qidir", "qidiring", "topla", "topib ber", "toping",
+        "izla", "izlab ber", "search", "topt",
+        "ko'rsat", "chiqar", "listini ber", "ro'yxat",
+        "list", "listing", "barchasi", "hammasi",
+        "qaysilar", "qaysi bor", "nechta bor",
+    ]
+    has_search_verb = any(sv in t for sv in search_verbs)
+
+    obj_words = [
+        "campaign", "kampaniya", "kampaniyalar",
+        "adset", "ad set", "adsetlar",
+        "reklama", "reklamalar", "ads",
+        "target", "targetlar",
+    ]
+    has_obj_word = any(ow in t for ow in obj_words)
+
+    # Qidiruv fe'li yoki (ob'ekt + ko'rsatish so'zi)
+    if has_search_verb:
+        # Agar stats so'zlari ham bo'lsa — stats ustunlik
+        stats_in_text = any(kw in t for kw in stats_kw)
+        if not stats_in_text:
+            return "OBJECT_SEARCH"
+
+    if has_obj_word and any(sv in t for sv in ["ko'rsat", "chiqar", "list", "barchasi"]):
+        return "OBJECT_SEARCH"
+
+    # ── 6. AI_CHAT (default) ────────────────────────────────────────────
     return "AI_CHAT"
+
+
+def extract_search_params(text: str) -> tuple[str, str]:
+    """
+    Tabiiy tildan qidiruv so'zi va ob'ekt turini ajratadi.
+    Returns: (query, obj_type)
+    obj_type: "campaigns" | "adsets" | "ads"
+    """
+    t = text.lower().strip()
+
+    # Ob'ekt turini aniqlash
+    obj_type = "campaigns"  # default
+    if any(w in t for w in ["adset", "ad set", "adsetlar"]):
+        obj_type = "adsets"
+    elif any(w in t for w in ["kampaniya", "campaign", "kampaniyalar"]):
+        obj_type = "campaigns"
+    elif any(w in t for w in ["reklama", "ads", "reklamalar", "ad "]):
+        obj_type = "ads"
+
+    # Prefikslarni olib tashlash
+    prefixes = [
+        "adset qidir:", "campaign qidir:", "ads qidir:",
+        "reklamani top:", "target qidir:", "kampaniya qidir:",
+        "reklama qidir:", "adset top:", "kampaniyani top:",
+    ]
+    for p in prefixes:
+        if t.startswith(p):
+            return t.replace(p, "").strip(), obj_type
+
+    # Qidiruv fe'llari va ob'ekt so'zlarini olib tashlash
+    remove_words = [
+        "qidir", "topla", "topib ber", "toping", "izla", "search",
+        "ko'rsat", "chiqar", "listini ber", "ro'yxat", "list",
+        "barchasi", "hammasi", "qaysilar",
+        "adset", "ad set", "campaign", "kampaniya", "reklama", "ads", "target",
+        "ni", "ni ", "ga", "dan", "dagi", "larni", "lardan",
+        "ber", "bering", "qilib", "qiling",
+    ]
+    query = t
+    for w in remove_words:
+        query = query.replace(w, " ")
+    query = " ".join(query.split()).strip()
+
+    return query, obj_type

@@ -1,38 +1,76 @@
+"""
+Professional AI Targeting Mutaxassisi — OpenAI GPT-4o-mini asosida.
+Kompaniya profilidan dinamik kontekst oladi.
+Suhbat tarixini saqlaydi va aniqlashtiruvchi savollar beradi.
+"""
 from openai import AsyncOpenAI
 from config.settings import OPENAI_API_KEY
 from utils.logger import logger
+from utils.company_profile import get_profile_context, get_company_name
 
-SYSTEM_PROMPT = """Sen dunyabunya qurilish mollari do'koni uchun AI Target Assistant'san.
-Faqat marketing, target, reklama, kreativ va qurilish savdosiga oid savollarga javob ber. 
-Agar savol marketing va targetga mutlaqo aloqador bo'lmasa (masalan: salom, qalaysan, ob havo, futbol, random chat), shunchaki "IGNORE" so'zini qaytar. Boshqa hech narsa yozma.
+# ── Suhbat tarixi (user_id → [messages]) ────────────────────────────────────
+_conversation_history: dict[int, list[dict]] = {}
+MAX_HISTORY = 8  # Eng ko'p saqlanadigan xabar juftligi
 
-MUHIM QOIDA: Sen hech qachon real data bo'lmagan joyda raqam o'ylab topma. Faqat mavjud data asosida gapir. Agar data yetmasa, ochiq ayt: "Bu ma'lumot menda yo'q" yoki "Buni aniqlash uchun real data kerak" yoki "O'ylab topmayman". Taxminiy raqamlar, o'rtacha qiymatlar yoki "odatda shunday bo'ladi" kabi gaplar bilan aldama.
 
-dunyabunya haqida:
-* dunyabunya — qurilish materiallari gipermarketi. "Barchasi qurilish uchun".
-* Asosiy mahsulotlar: gipsokarton, profil, kafel, oboy, linoleum, Tarkett, santexnika, eshik, lyustra, quvur, bazalt, penoplex, qorishmalar, instrumentlar.
-* Do'kon yetkazib berish (50 tadan oshiq mashina), o'rnatish va maslahat xizmatlarini taklif qiladi.
-* Mijoz segmentlari: uy qurayotganlar, remont qilayotganlar, ustalar, prorablar, quruvchilar, tadbirkorlar.
+def _get_history(user_id: int) -> list[dict]:
+    return _conversation_history.get(user_id, [])
 
-Vazifalaring:
-- Agar foydalanuvchi kreativ so'rasa ("reels ssenariy", "hook", "caption yoz", "oferta", "ad copy", "DM script", "content plan"), quyidagi formatda ber:
-  1. Sabab/Kontekst
-  2. Yangi creative yo'nalish
-  3. 3 ta Hook
-  4. 1 ta Reels ssenariy
-  5. 1 ta Caption
-  6. 1 ta CTA
-  7. Target tavsiya
-- Marketing strategiya so'ralsa: Dunyabunya qurilish sohasi kontekstida amaliy, batafsil javob ber.
-- Target setting, audience, budget tavsiya so'ralsa: real tajriba asosida javob ber.
-- Sales script, offer yaratish, lead quality analysis so'ralsa: qurilish sohasi uchun moslangan javob ber.
-- Qisqa, amaliy, targetchi tilida va qurilish sohasi kontekstida javob ber.
-- Hallucination qilma. O'zing kampaniyalarni avtomatik o'chira olmaysan, faqat maslahat berasan.
-- Raqamlar faqat senga berilgan real data'dan bo'lsin. O'ylab topilgan raqam ishlatma.
-"""
+
+def _add_to_history(user_id: int, role: str, content: str):
+    if user_id not in _conversation_history:
+        _conversation_history[user_id] = []
+    _conversation_history[user_id].append({"role": role, "content": content})
+    # Eski xabarlarni tozalash
+    if len(_conversation_history[user_id]) > MAX_HISTORY * 2:
+        _conversation_history[user_id] = _conversation_history[user_id][-MAX_HISTORY * 2:]
+
+
+def _clear_history(user_id: int):
+    _conversation_history.pop(user_id, None)
+
+
+def _build_system_prompt() -> str:
+    """Dinamik system prompt — kompaniya profili bilan."""
+    company_ctx = get_profile_context()
+    company_name = get_company_name()
+
+    base = f"""Sen professional AI Targeting Mutaxassisisisan — real xodim.
+Kompaniyaning Meta Ads (Facebook/Instagram) kampaniyalarini boshqarasan, tahlil qilasan va optimallashtirasан.
+
+{company_ctx if company_ctx else f"* Kompaniya: {company_name}"}
+
+MUTAXASSIS SIFATIDA VAZIFALARING:
+1. Meta Ads kampaniya tahlili va optimizatsiyasi
+2. Target auditoriya sozlamalari va tavsiyalari
+3. Creative kontent (reels ssenariy, hook, caption, ad copy, DM script)
+4. Marketing funnel va lead generation strategiyasi
+5. Kampaniyalar bo'yicha qarorlar (pause, enable, budget tavsiyalari)
+6. A/B test rejalashtirish va creative fatigue diagnostikasi
+
+QOIDALAR:
+- HECH QACHON o'ylab raqam topma — faqat senga berilgan real data asosida gapir
+- Agar ma'lumot yetmasa yoki savol noaniq bo'lsa: qisqa ANIQLASHTIRUVCHI SAVOL ber (1-2 savol max)
+- Aniqlashtiruvchi savol boshlanishi: "❓" belgisi bilan
+- Faqat marketing/targeting/reklama sohalariga javob ber
+- Agar savol mutlaqo aloqasiz bo'lsa (futbol, ob-havo, oshpazlik) — "IGNORE" qaytar
+- Javoblar qisqa, amaliy va professional bo'lsin
+- Data bo'lmagan joyda "taxminan" yoki "odatda shunday bo'ladi" deb raqam ixtiro qilma
+
+KREATIV FORMAT (so'ralganda):
+1. Sabab/Kontekst
+2. Yangi creative yo'nalish
+3. 3 ta Hook varianti
+4. 1 ta Reels ssenariy
+5. 1 ta Caption
+6. 1 ta CTA
+7. Target auditoriya tavsiyasi"""
+
+    return base
+
 
 class AIAnalyzer:
-    """OpenAI API orqali reklama ma'lumotlarini tahlil qiluvchi service."""
+    """OpenAI API orqali professional targeting analizi."""
 
     def __init__(self):
         self.api_key = OPENAI_API_KEY
@@ -41,289 +79,315 @@ class AIAnalyzer:
             try:
                 self.client = AsyncOpenAI(api_key=self.api_key)
             except Exception as e:
-                logger.error(f"OpenAI API key noto'g'ri yoki topilmadi: {e}")
-                self.client = None
+                logger.error(f"OpenAI client xato: {e}")
 
-    async def analyze_metrics(self, account_data: dict, campaigns: list = None, yesterday_data: dict = None) -> str:
-        """
-        To'liq tahlil qaytaradi (faqat admin uchun).
-        Agar real data bo'lmasa, analiz qilmaydi.
-        """
-        # Real data bo'lmasa analiz qilmaymiz
+    # ─────────────────────────────────────────────────────────────────────────
+    # PUBLIC METHODS
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def analyze_metrics(
+        self,
+        account_data: dict,
+        campaigns: list = None,
+        yesterday_data: dict = None,
+    ) -> str:
         if not account_data:
-            return "📊 Analiz uchun real Meta Ads data kerak. Hozirda API'dan ma'lumot olinmadi."
-
+            return "📊 Analiz uchun real Meta Ads data kerak. API'dan ma'lumot olinmadi."
         if self.client:
             try:
                 return await self._openai_analyze(account_data, campaigns, yesterday_data)
             except Exception as e:
-                logger.error(f"OpenAI analyze xatolik: {e}")
+                logger.error(f"OpenAI analyze xato: {e}")
                 return self._local_analyze(account_data, campaigns)
-        else:
-            return self._local_analyze(account_data, campaigns)
+        return self._local_analyze(account_data, campaigns)
 
-    async def answer_question(self, question: str, account_data: dict, campaigns: list = None, yesterday_data: dict = None, is_admin: bool = True) -> str:
-        """
-        Savolga javob.
-        Admin uchun — real data kontekstida.
-        Oddiy user uchun — faqat umumiy marketing yordam.
-        """
+    async def answer_question(
+        self,
+        question: str,
+        account_data: dict,
+        campaigns: list = None,
+        yesterday_data: dict = None,
+        is_admin: bool = True,
+        user_id: int = 0,
+    ) -> str:
         if self.client:
             try:
-                return await self._openai_answer(question, account_data, campaigns, yesterday_data, is_admin)
+                return await self._openai_answer(
+                    question, account_data, campaigns, yesterday_data, is_admin, user_id
+                )
             except Exception as e:
-                logger.error(f"OpenAI QA xatolik: {e}")
-                return "⚠️ OpenAI xatosi yuz berdi."
-        else:
-            return "⚠️ OpenAI API key noto'g'ri yoki topilmadi. AI analiz bera olmayman."
+                logger.error(f"OpenAI QA xato: {e}")
+                return "⚠️ AI xizmatida vaqtinchalik nosozlik. Iltimos, qayta urinib ko'ring."
+        return "⚠️ OpenAI API kaliti sozlanmagan. AI analiz bera olmayman."
 
-    async def _openai_analyze(self, data: dict, campaigns: list = None, yesterday: dict = None) -> str:
-        campaign_text = self._format_campaigns(campaigns) if campaigns else "Kampaniyalar ma'lumoti yo'q."
-
-        # Kechagi data bilan solishtirish
-        yest_text = ""
-        if yesterday:
-            yest_text = f"Kechagi CPL: ${yesterday.get('cpl', 0)}"
-        else:
-            yest_text = "Kechagi data olinmadi."
-
-        # CPL formatlash
-        leads = data.get('leads', 0)
-        spend = data.get('spend', 0)
-        if leads > 0 and spend > 0:
-            cpl_text = f"${data.get('cpl', 0)}"
-        elif leads == 0 and spend > 0:
-            cpl_text = "hisoblab bo'lmadi (lead yo'q)"
-        else:
-            cpl_text = "$0"
-
-        prompt = f"""Quyidagi bugungi REAL statistikani tahlil qil. {yest_text}
-
-BUGUNGI REAL DATA: Spend: ${spend}, Leads: {leads}, CPL: {cpl_text}, CTR: {data.get('ctr', 0)}%, CPM: ${data.get('cpm', 0)}, Freq: {data.get('frequency', 0)}
-KAMPANIYALAR: {campaign_text}
-
-MUHIM: Faqat yuqoridagi real raqamlar asosida tahlil qil. O'ylab raqam qo'shma. Agar biror metric yo'q bo'lsa, "ma'lumot yo'q" deb yoz.
-
-Format:
-1. Nima bo'ldi? (faqat real raqamlar asosida)
-2. Sababi nima bo'lishi mumkin?
-3. Nima qilish kerak?
-4. Qaysi kampaniyani kuzatish kerak?"""
-
-        resp = await self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-            max_tokens=800, temperature=0.7
-        )
-        return resp.choices[0].message.content.strip()
-
-    async def _openai_answer(self, question: str, data: dict, campaigns: list = None, yesterday: dict = None, is_admin: bool = True) -> str:
-        prompt = f"Foydalanuvchi so'radi: {question}\n\n"
-
-        if is_admin:
-            # Admin uchun — agar real data bor bo'lsa, kontekst sifatida beramiz
-            if data:
-                campaign_text = self._format_campaigns(campaigns) if campaigns else ""
-                y_cpl = yesterday.get('cpl', 0) if yesterday else "ma'lumot yo'q"
-
-                leads = data.get('leads', 0)
-                spend = data.get('spend', 0)
-                if leads > 0 and spend > 0:
-                    cpl_text = f"${data.get('cpl', 0)}"
-                elif leads == 0 and spend > 0:
-                    cpl_text = "hisoblab bo'lmadi (lead yo'q)"
-                else:
-                    cpl_text = "$0"
-
-                prompt += f"""Hozirgi REAL statistika (Kontekst uchun):
-Bugun -> Spend: ${spend}, Leads: {leads}, CPL: {cpl_text}, CTR: {data.get('ctr', 0)}%, CPM: ${data.get('cpm', 0)}, Freq: {data.get('frequency', 0)}.
-Kechagi CPL: ${y_cpl}.
-Kampaniyalar: {campaign_text}
-
-MUHIM: Faqat yuqoridagi real raqamlar asosida javob ber. O'ylab raqam qo'shma.
-"""
-            else:
-                prompt += """DIQQAT: Hozirda Meta API'dan real data olinmadi.
-Agar foydalanuvchi statistika so'rasa: "Hozirda real Meta Ads data olinmadi. Statistika uchun API ishlashi kerak." deb javob ber.
-Agar marketing/kreativ savol bo'lsa (creative, reels, target, audience, caption, hook, DM script, strategy, budget, content plan, ad copy, sales script, offer) — to'liq yaxshi javob ber.
-"""
-        else:
-            prompt += """DIQQAT: Bu foydalanuvchi ADMIN EMAS! 
-Senda hozirgi statistika yo'q. U senga joriy natijalar (spend, kampaniyalar, qaysi yomonligi) haqida savol bersa, "Uzr, bu maxfiy ma'lumot va faqat adminga beriladi" deb javob ber.
-Maxfiy raqamlar, kampaniya nomlari, spend, CPL, CTR, lead sifati berma.
-Faqatgina umumiy kreativ yozish, reels ssenariy, target sozlamalari, marketing maslahatlar, content plan, ad copy kabi umumiy savollarga to'liq yordam ber."""
-
-        resp = await self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-            max_tokens=1000, temperature=0.7
-        )
-        return resp.choices[0].message.content.strip()
-
-    async def generate_monitoring_alert(self, data: dict, yesterday: dict, issues: list) -> str:
-        """
-        Target natijalari yomonlashganida alert uchun AI tahlil va tavsiyalar yaratadi.
-        """
+    async def generate_monitoring_alert(
+        self, data: dict, yesterday: dict, issues: list
+    ) -> str:
         if not self.client:
             return "⚠️ AI ulanmagan. Iltimos, natijalarni qo'lda tekshiring."
 
-        issues_text = "\n".join([f"- {i}" for i in issues])
-        
-        prompt = f"""DIQQAT: Target natijalarida muammo aniqlandi!
-        
+        company_name = get_company_name()
+        issues_text = "\n".join(f"- {i}" for i in issues)
+        y_cpl = yesterday.get("cpl", "?") if yesterday else "Noma'lum"
+
+        prompt = f"""DIQQAT: {company_name} reklamalarida muammo aniqlandi!
+
 ANIQLANGAN MUAMMOLAR:
 {issues_text}
 
-BUGUNGI REAL DATA: 
-Spend: ${data.get('spend')}, Leads: {data.get('leads')}, CPL: ${data.get('cpl')}, CTR: {data.get('ctr')}%, CPM: ${data.get('cpm')}, Freq: {data.get('frequency')}
+BUGUNGI REAL DATA:
+Spend: ${data.get('spend')}, Leads: {data.get('leads')}, CPL: ${data.get('cpl')},
+CTR: {data.get('ctr')}%, CPM: ${data.get('cpm')}, Freq: {data.get('frequency')}
 
 KECHAGI DATA:
-CPL: ${yesterday.get("cpl") if yesterday else "Noma'lum"}
+CPL: ${y_cpl}
 
-VAZIFA: 
-1. Ushbu muammolarni Dunyabunya (qurilish materiallari) kontekstida qisqa tahlil qil.
-2. Amaliy va aniq 5 ta tavsiya ber (qaysi mahsulot/creative/audience test qilish kerak).
-3. Faqat real raqamlar asosida gapir.
+VAZIFA:
+1. Muammolarni {company_name} kontekstida qisqa tahlil qil
+2. Amaliy 5 ta tavsiya ber
+3. Faqat real raqamlar asosida gapir
 
 FORMAT:
-🧠 AI xulosa: (qisqa)
-🏗 Dunyabunya uchun tavsiya: (5 ta bullet point)"""
+🧠 Xulosa: (1-2 jumla)
+📋 Tavsiyalar:
+• ...
+• ...
+• ...
+• ...
+• ..."""
 
-        resp = await self.client.chat.completions.create(
-            model="gpt-4o-mini",
-            messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-            max_tokens=800, temperature=0.7
-        )
-        return resp.choices[0].message.content.strip()
+        try:
+            resp = await self.client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[
+                    {"role": "system", "content": _build_system_prompt()},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=600,
+                temperature=0.6,
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            logger.error(f"Monitoring alert xato: {e}")
+            return f"⚠️ AI tahlili yuklanmadi. Muammolar: {', '.join(issues)}"
+
     async def parse_action_intent(self, text: str) -> dict | None:
-        """
-        Foydalanuvchi xabaridan action intentni aniqlaydi.
-        Returns JSON-like dict or None.
-        {"action": "pause/enable/budget/create/duplicate", "obj_type": "campaigns/adsets/ads", "query": "name", "budget": 12.5}
-        """
+        """Xabardan Meta action intentini aniqlaydi."""
         if not self.client:
             return None
 
-        prompt = f"""Foydalanuvchi quyidagi matnni yozdi: "{text}"
-        
-Vazifa: Bu matn Meta Ads kampaniyasini o'zgartirish (action - pause, enable, budget, duplicate, create) so'rovimi shuni aniqla.
-Agar bu action bo'lmasa yoki aniq Meta ob'ekti (campaign, adset, ad) ko'rsatilmagan bo'lsa, faqat "NONE" deb javob ber.
+        prompt = f"""Foydalanuvchi: "{text}"
 
-DIQQAT: Agar xabar marketing yordami (creative yozish, reels, ssenariy, caption, hook, strategiya) haqida bo'lsa, bu action EMAS! "NONE" deb javob ber.
-Agar xabar guruhga xabar yuborish haqida bo'lsa, bu action EMAS! "NONE" deb javob ber.
+Bu matn Meta Ads kampaniyasini o'zgartirish so'rovimi? Aniqlash:
+- pause/o'chir/to'xtat → action: "pause"
+- yoq/enable/active → action: "enable"
+- budget o'zgartir → action: "budget"
+- duplicate/copy/nusxa → action: "duplicate"
+- create/yarat/yangi → action: "create"
 
-Action turlari:
-1. "pause": o'chir, pause qil, to'xtat
-2. "enable": yoq, active qil, enable qil
-3. "budget": budgetni oshir, budgetni kamaytir, $20 qil, 15$ budget qo'y
-4. "create": yarat, och, create, new, yangi ad set, yangi campaign
-5. "duplicate": copy qil, duplicate qil, nusxa ol, clone qil
+AGAR marketing yordami (creative, reels, ssenariy, strategiya) haqida bo'lsa → "NONE"
+AGAR guruhga yuborish haqida bo'lsa → "NONE"
+AGAR aniq ob'ekt nomi ko'rsatilmagan bo'lsa → "NONE"
 
-Object turlari ("obj_type"):
-1. "campaigns": campaign, kampaniya
-2. "adsets": adset, ad set, auditoriya, target
-3. "ads": ad, reklama, e'lon
+Object turlari:
+- campaigns: campaign, kampaniya
+- adsets: adset, ad set, target
+- ads: ad, reklama, e'lon
 
-Agar action bo'lsa, quyidagi JSON formatida javob ber (boshqa hech narsa yozma):
-{{
-    "action": "pause" yopi "enable" yoki "budget" yoki "create" yoki "duplicate",
-    "obj_type": "campaigns" yoki "adsets" yoki "ads",
-    "query": "qidirilayotgan ob'ekt nomi (masalan: bazalt, remont, activ). DIQQAT: 'target', 'ad set', 'campaign' so'zlarini query qilib olma, ular obj_type! Agar nom bo'lmasa: ''",
-    "budget": (faqat budget o'zgarganda son qiymat, masalan: 20, yo'q bo'lsa null)
-}}
+Agar action bo'lsa, FAQAT JSON:
+{{"action": "pause|enable|budget|create|duplicate", "obj_type": "campaigns|adsets|ads", "query": "ob'ekt nomi (bo'lmasa bo'sh)", "budget": null_yoki_son}}
 
 Misollar:
-"bazalt campaign ichiga yangi ad set yarat" -> {{"action": "create", "obj_type": "adsets", "query": "bazalt", "budget": null}}
-"activ reklamani copy qilib yangi audience bilan yoq" -> {{"action": "duplicate", "obj_type": "ads", "query": "activ", "budget": null}}
-"eski targetni pause qil" -> {{"action": "pause", "obj_type": "adsets", "query": "eski", "budget": null}}
-"15$ budget qil" -> {{"action": "budget", "obj_type": "campaigns", "query": "", "budget": 15}}
-"bugungi statistikani ko'rsat" -> NONE
-"""
+"bazalt kampaniyani o'chir" → {{"action":"pause","obj_type":"campaigns","query":"bazalt","budget":null}}
+"remont adsetini yoq" → {{"action":"enable","obj_type":"adsets","query":"remont","budget":null}}
+"20$ budget qo'y" → {{"action":"budget","obj_type":"campaigns","query":"","budget":20}}
+"reels g'oyasi ber" → NONE"""
+
         try:
             resp = await self.client.chat.completions.create(
                 model="gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=100, temperature=0.0
+                max_tokens=120,
+                temperature=0.0,
             )
             content = resp.choices[0].message.content.strip()
             if content == "NONE":
                 return None
-            
+
             import json
-            if "```json" in content:
-                content = content.split("```json")[1].split("```")[0].strip()
-            elif "```" in content:
-                 content = content.split("```")[1].split("```")[0].strip()
-                 
+            for fence in ["```json", "```"]:
+                if fence in content:
+                    content = content.split(fence)[1].split("```")[0].strip()
             return json.loads(content)
         except Exception as e:
-            logger.error(f"Intent parsing error: {e}")
+            logger.error(f"Intent parsing xato: {e}")
             return None
 
     async def analyze_task(self, text: str) -> dict:
-        """
-        Admin bergan vazifani analiz qiladi va bajarish rejasini tuzadi.
-        """
+        """Admin vazifasini tahlil qiladi."""
         if not self.client:
             return {"can_do": False, "message": "AI ulanmagan."}
 
-        prompt = f"""Foydalanuvchi (ADMIN) quyidagi vazifani berdi: "{text}"
+        company_name = get_company_name()
+        prompt = f"""Admin vazifa: "{text}"
 
-Sening vazifang bu topshiriqni tahlil qilish. Hozircha sen quyidagi ishlarni qila olasan:
-1. "send_to_group": Guruhga xabar yuborish (xabarni tahrirlab, chiroyli formatda, emojilar bilan).
-2. "marketing_advice": Marketing/kreativ bo'yicha maslahat berish.
-3. "meta_action": Reklamani o'chirish/yoqish/budget (lekin bu boshqa intentda).
+Sen nima qila olasan:
+1. send_to_group: Guruhga chiroyli xabar yuborish (markdown, emojilar bilan)
+2. marketing_advice: Marketing/kreativ maslahat
 
-Agar topshiriq guruhga biror narsa yozish bo'lsa (masalan: "buni guruhga tashla", "guruhga bugungi natijani yoz", "mana buni guruhga chiroyli qilib yoz"), uni "send_to_group" deb belgilang va xabarni "formatted_text" maydoniga chiroyli qilib (emojilar bilan, marketing uslubida) yozing.
+Agar guruhga yozish bo'lsa → "send_to_group" va "formatted_text" maydoniga tayyor xabarni yoz.
+Agar qila olmasang → can_do: false.
 
-Agar sen qila olmaydigan ish bo'lsa (masalan: "ovqat pishir", "mashina hayda"), "can_do": false deb qaytar.
+FAQAT JSON:
+{{"can_do": true/false, "action": "send_to_group|marketing_advice|none", "formatted_text": "...", "message": "admin uchun javob"}}"""
 
-Javobni FAQAT JSON formatida qaytar:
-{{
-    "can_do": true/false,
-    "action": "send_to_group" yoki "marketing_advice" yoki "none",
-    "formatted_text": "guruhga yuboriladigan tayyor matn (agar bo'lsa, aks holda bo'sh)",
-    "message": "admin uchun javob/tushuntirish"
-}}
-"""
         try:
             resp = await self.client.chat.completions.create(
                 model="gpt-4o-mini",
-                messages=[{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": prompt}],
-                max_tokens=1000, temperature=0.3, response_format={ "type": "json_object" }
+                messages=[
+                    {"role": "system", "content": _build_system_prompt()},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=1000,
+                temperature=0.3,
+                response_format={"type": "json_object"},
             )
             import json
             return json.loads(resp.choices[0].message.content.strip())
         except Exception as e:
-            logger.error(f"Task analysis error: {e}")
+            logger.error(f"Task analysis xato: {e}")
             return {"can_do": False, "message": f"Xatolik: {e}"}
 
+    # ─────────────────────────────────────────────────────────────────────────
+    # PRIVATE METHODS
+    # ─────────────────────────────────────────────────────────────────────────
+
+    async def _openai_analyze(
+        self, data: dict, campaigns: list = None, yesterday: dict = None
+    ) -> str:
+        campaign_text = self._format_campaigns(campaigns) if campaigns else "Ma'lumot yo'q."
+        y_cpl = f"${yesterday.get('cpl', 0)}" if yesterday else "Ma'lumot yo'q"
+
+        leads = data.get("leads", 0)
+        spend = data.get("spend", 0)
+        cpl_text = (
+            f"${data.get('cpl', 0)}"
+            if leads > 0 and spend > 0
+            else ("hisoblab bo'lmadi (lead yo'q)" if spend > 0 else "$0")
+        )
+
+        prompt = f"""Quyidagi REAL statistikani tahlil qil. Kechagi CPL: {y_cpl}
+
+BUGUNGI DATA: Spend: ${spend}, Leads: {leads}, CPL: {cpl_text}, CTR: {data.get('ctr', 0)}%, CPM: ${data.get('cpm', 0)}, Freq: {data.get('frequency', 0)}
+KAMPANIYALAR: {campaign_text}
+
+MUHIM: Faqat yuqoridagi real raqamlar asosida tahlil qil.
+
+Format:
+1. Nima bo'ldi? (real raqamlar)
+2. Sababi nima bo'lishi mumkin?
+3. Nima qilish kerak? (konkret tavsiya)
+4. Qaysi kampaniyani kuzatish kerak?"""
+
+        resp = await self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "system", "content": _build_system_prompt()},
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=800,
+            temperature=0.6,
+        )
+        return resp.choices[0].message.content.strip()
+
+    async def _openai_answer(
+        self,
+        question: str,
+        data: dict,
+        campaigns: list = None,
+        yesterday: dict = None,
+        is_admin: bool = True,
+        user_id: int = 0,
+    ) -> str:
+        system = _build_system_prompt()
+
+        # Suhbat tarixini olish
+        history = _get_history(user_id) if user_id else []
+
+        # Kontekst qurilishi
+        context_block = ""
+        if is_admin:
+            if data:
+                campaign_text = self._format_campaigns(campaigns) if campaigns else ""
+                y_cpl = yesterday.get("cpl", 0) if yesterday else "ma'lumot yo'q"
+                leads = data.get("leads", 0)
+                spend = data.get("spend", 0)
+                cpl_text = (
+                    f"${data.get('cpl', 0)}"
+                    if leads > 0 and spend > 0
+                    else ("hisoblab bo'lmadi" if spend > 0 else "$0")
+                )
+                context_block = (
+                    f"\n\nHOZIRGI REAL DATA:\n"
+                    f"Spend: ${spend}, Leads: {leads}, CPL: {cpl_text}, "
+                    f"CTR: {data.get('ctr', 0)}%, CPM: ${data.get('cpm', 0)}, "
+                    f"Freq: {data.get('frequency', 0)}. Kechagi CPL: ${y_cpl}.\n"
+                    f"Kampaniyalar: {campaign_text}\n"
+                    f"MUHIM: Faqat yuqoridagi real raqamlar asosida javob ber."
+                )
+            else:
+                context_block = (
+                    "\n\nDIQQAT: Hozirda Meta API'dan real data olinmadi. "
+                    "Statistika so'ralsa: 'Hozirda real data olinmadi, API ishlashi kerak' de. "
+                    "Marketing/kreativ savol bo'lsa — to'liq yaxshi javob ber."
+                )
+        else:
+            context_block = (
+                "\n\nDIQQAT: Bu foydalanuvchi ADMIN EMAS. "
+                "Maxfiy raqamlar, kampaniya nomlari, spend, CPL berma. "
+                "Faqat umumiy kreativ, target sozlamalari, marketing maslahat ber."
+            )
+
+        # Xabarlar ro'yxati
+        messages = [{"role": "system", "content": system + context_block}]
+        messages.extend(history)
+        messages.append({"role": "user", "content": question})
+
+        resp = await self.client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages,
+            max_tokens=1000,
+            temperature=0.7,
+        )
+        answer = resp.choices[0].message.content.strip()
+
+        # Tariхga qo'shish
+        if user_id:
+            _add_to_history(user_id, "user", question)
+            _add_to_history(user_id, "assistant", answer)
+
+        return answer
+
     def _local_analyze(self, data: dict, campaigns: list = None) -> str:
-        """OpenAI ulanmagan bo'lsa, oddiy lokal tahlil."""
+        """OpenAI ulanmagan bo'lsa — sodda lokal tahlil."""
         if not data:
             return "📊 Analiz uchun real Meta Ads data kerak."
 
-        lines = ["📊 Oddiy tahlil (OpenAI ulanmagan):\n"]
+        lines = ["📊 Tahlil (AI ulanmagan):\n"]
+        spend = data.get("spend", 0)
+        leads = data.get("leads", 0)
 
-        spend = data.get('spend', 0)
-        leads = data.get('leads', 0)
-
-        if spend > 0:
-            lines.append(f"💰 Bugungi xarajat: ${spend:.2f}")
-        else:
-            lines.append("💰 Bugungi xarajat: $0 yoki ma'lumot yo'q")
-
+        lines.append(f"💰 Xarajat: ${spend:.2f}" if spend > 0 else "💰 Xarajat: $0")
         if leads > 0:
             lines.append(f"📩 Leadlar: {leads}")
             if spend > 0:
-                cpl = round(spend / leads, 2)
-                lines.append(f"🎯 CPL: ${cpl}")
+                lines.append(f"🎯 CPL: ${round(spend/leads, 2)}")
         else:
-            lines.append("📩 Leadlar: 0 yoki ma'lumot yo'q")
+            lines.append("📩 Leadlar: 0")
             if spend > 0:
                 lines.append("🎯 CPL: hisoblab bo'lmadi (lead yo'q)")
 
-        ctr = data.get('ctr', 0)
+        ctr = data.get("ctr", 0)
         if ctr > 0:
             lines.append(f"📈 CTR: {ctr}%")
 
@@ -333,4 +397,7 @@ Javobni FAQAT JSON formatida qaytar:
     def _format_campaigns(self, campaigns: list) -> str:
         if not campaigns:
             return ""
-        return "\n".join([f"- {c.get('campaign_name')}: CPL=${c.get('cpl')}, CTR={c.get('ctr')}%" for c in campaigns])
+        return " | ".join(
+            f"{c.get('campaign_name','?')}: CPL=${c.get('cpl','?')}, CTR={c.get('ctr','?')}%"
+            for c in campaigns[:8]
+        )

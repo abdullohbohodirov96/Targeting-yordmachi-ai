@@ -1,42 +1,53 @@
+"""
+Asosiy xabar router.
+Tabiiy til intenti aniqlaydi va tegishli handlerga yo'naltiradi.
+"""
 from aiogram import Router, F, types
 from services.ai_analyzer import AIAnalyzer
 from services.report_builder import build_target_report
 from services.meta_ads_service import MetaAdsService
+from services.meta_actions_service import MetaActionsService
 from services.date_parser import is_date_request, parse_date_request
 from handlers.actions import handle_action_request
-from utils.intent_classifier import detect_intent
+from utils.intent_classifier import detect_intent, extract_search_params
+from utils.company_profile import is_profile_setup
 from config.settings import ADMIN_ID
 from utils.logger import logger
 
 router = Router()
 
-# === HELPERS ===
+
+# ── Yordamchi funksiyalar ────────────────────────────────────────────────────
 
 def is_admin(user_id: int) -> bool:
     return ADMIN_ID is not None and user_id == ADMIN_ID
 
+
 def is_private_chat(message: types.Message) -> bool:
     return message.chat.type == "private"
+
 
 def is_group_chat(message: types.Message) -> bool:
     return message.chat.type in ["group", "supergroup"]
 
-# === ADMIN-ONLY KEYWORDS ===
-ADMIN_ONLY_KEYWORDS = [
+
+ADMIN_ONLY_KW = [
     "analyze", "tahlil", "optimization", "optimizatsiya",
     "recommendation", "tavsiya", "eng yaxshi", "eng yomon",
     "o'chirish kerak", "scale qilish", "lead sifati", "quality",
-    "campaign analysis", "maxfiy", "confidential",
-    "qaysi kampaniya", "budget oshir", "budget kamayir",
-    "target o'zgartir", "audience almashir", "creative fatigue",
+    "campaign analysis", "qaysi kampaniya", "budget oshir",
+    "target o'zgartir", "creative fatigue",
 ]
 
-STATS_KEYWORDS = [
+STATS_KW = [
     "statistika", "hisobot", "report", "natija",
     "cpl", "spend", "xarajat", "lead", "ctr", "cpm",
     "campaign", "kampaniya", "analyze", "tahlil",
     "target natija", "reklama natija", "ads data",
 ]
+
+
+# ── Asosiy handler ──────────────────────────────────────────────────────────
 
 @router.message(F.text)
 async def handle_text_message(message: types.Message):
@@ -46,113 +57,107 @@ async def handle_text_message(message: types.Message):
     user_admin = is_admin(user_id)
     private = is_private_chat(message)
 
-    # 1. Intentni aniqlaymiz
-    intent = detect_intent(text)
-    logger.info(f"Detected intent for '{text}': {intent}")
+    # Kompaniya profili sozlanmagan bo'lsa — admin'ga eslatma
+    if user_admin and private and not is_profile_setup():
+        # Faqat buyruq bo'lmasa eslatma chiqar
+        if not text.startswith("/"):
+            await message.answer(
+                "⚠️ Kompaniya profili hali sozlanmagan.\n\n"
+                "Menga kompaniyangiz haqida aytib bering — shunda men sizga aniqroq yordam bera olaman.\n\n"
+                "👉 /setup — kompaniya profilini sozlash"
+            )
 
-    # ============================================
-    # A) SEND_TO_GROUP (Guruhga xabar yuborish/Task) - HIGHEST PRIORITY
-    # ============================================
+    intent = detect_intent(text)
+    logger.info(f"Intent: '{text[:50]}' → {intent}")
+
+    # ── A) SEND_TO_GROUP ─────────────────────────────────────────────────
     if intent == "SEND_TO_GROUP":
         if not user_admin:
-            await message.answer("❌ Bu amal faqat admin uchun mavjud.")
+            await message.answer("❌ Bu amal faqat admin uchun.")
             return
         await _process_group_task(message, text)
         return
 
-    # ============================================
-    # B) CREATIVE_TASK (Marketing AI Assistant)
-    # ============================================
+    # ── B) CREATIVE_TASK ─────────────────────────────────────────────────
     if intent == "CREATIVE_TASK":
-        # Hech qanday Meta object qidirilmaydi, to'g'ridan-to'g'ri AI ga
-        await _process_ai_chat(message, text, user_admin)
+        await _process_ai_chat(message, text, user_admin, user_id)
         return
 
-    # ============================================
-    # C) META_STATS (Date/Statistika requests)
-    # ============================================
+    # ── C) META_STATS ────────────────────────────────────────────────────
     if intent == "META_STATS" or is_date_request(text_lower):
         if private and not user_admin:
-            is_stats_request = any(kw in text_lower for kw in STATS_KEYWORDS)
-            if is_stats_request or is_date_request(text_lower):
-                await message.answer(
-                    "❌ Uzr, private chatda bu ma'lumotlar faqat admin uchun mavjud.\n\n"
-                    "📊 Statistikani guruhda olishingiz mumkin.\n"
-                    "🎬 Bu yerda kreativ, reels, caption, hook so'rashingiz mumkin."
-                )
-                return
+            await message.answer(
+                "❌ Private chatda statistika faqat admin uchun.\n\n"
+                "📊 Statistikani guruhda ko'rish mumkin.\n"
+                "🎬 Bu yerda kreativ, reels, caption so'rash mumkin."
+            )
+            return
 
         await message.answer("⏳ Ma'lumot qidirilmoqda...")
         admin_mode = user_admin and private
-        
         date_data = parse_date_request(text_lower)
+
         if date_data:
             if "period" in date_data:
                 report = await build_target_report(
                     period=date_data["period"],
                     is_admin=admin_mode,
-                    include_analysis=admin_mode
+                    include_analysis=admin_mode,
                 )
             else:
                 report = await build_target_report(
                     since=date_data["since"],
                     until=date_data["until"],
                     is_admin=admin_mode,
-                    include_analysis=admin_mode
+                    include_analysis=admin_mode,
                 )
         else:
-            # Agar sana bo'lmasa lekin statistika so'ralsa, bugungini beramiz
             report = await build_target_report(
                 period="today",
                 is_admin=admin_mode,
-                include_analysis=admin_mode
+                include_analysis=admin_mode,
             )
-            
         await message.answer(report)
         return
 
-    # ============================================
-    # D) META_ACTION (O'zgartirishlar, pause, budget)
-    # ============================================
+    # ── D) META_ACTION ───────────────────────────────────────────────────
     if intent == "META_ACTION":
         if not user_admin:
-            await message.answer("❌ Bu amal faqat admin uchun mavjud.")
+            await message.answer("❌ Bu amal faqat admin uchun.")
             return
-        
         handled = await handle_action_request(message)
         if handled:
             return
+        # Agar handle bo'lmasa AI ga o'tkazamiz
+        await _process_ai_chat(message, text, user_admin, user_id)
+        return
 
-    # ============================================
-    # E) OBJECT_SEARCH (Faqat aniq qidiruv buyruqlari)
-    # ============================================
+    # ── E) OBJECT_SEARCH ─────────────────────────────────────────────────
     if intent == "OBJECT_SEARCH":
         if not user_admin:
-            await message.answer("❌ Bu amal faqat admin uchun mavjud.")
+            await message.answer("❌ Bu amal faqat admin uchun.")
             return
-            
-        await _process_object_search(message, text_lower)
+        await _process_object_search(message, text)
         return
 
-    # ============================================
-    # F) AI_CHAT / DEFAULT (Qolgan holatlar)
-    # ============================================
-    is_confidential = any(kw in text_lower for kw in ADMIN_ONLY_KEYWORDS)
-    if is_confidential and not user_admin:
-        await message.answer("❌ Bu funksiya faqat admin uchun mavjud.")
+    # ── F) AI_CHAT (default) ─────────────────────────────────────────────
+    if any(kw in text_lower for kw in ADMIN_ONLY_KW) and not user_admin:
+        await message.answer("❌ Bu funksiya faqat admin uchun.")
         return
-        
-    await _process_ai_chat(message, text, user_admin)
+
+    await _process_ai_chat(message, text, user_admin, user_id)
 
 
-async def _process_ai_chat(message: types.Message, text: str, user_admin: bool):
+# ── Yordamchi handlerlar ─────────────────────────────────────────────────────
+
+async def _process_ai_chat(
+    message: types.Message, text: str, user_admin: bool, user_id: int = 0
+):
+    """AI savol-javob — suhbat tarixini saqlaydi."""
     ai = AIAnalyzer()
     meta = MetaAdsService()
 
-    account_data = None
-    campaigns = None
-    yesterday_data = None
-
+    account_data = campaigns = yesterday_data = None
     if user_admin:
         account_data = await meta.get_account_insights("today")
         campaigns = await meta.get_campaign_insights("today")
@@ -163,72 +168,81 @@ async def _process_ai_chat(message: types.Message, text: str, user_admin: bool):
         account_data=account_data,
         campaigns=campaigns,
         yesterday_data=yesterday_data,
-        is_admin=user_admin
+        is_admin=user_admin,
+        user_id=user_id,
     )
 
-    if answer and answer != "IGNORE":
+    if answer and answer.upper() != "IGNORE":
         await message.answer(answer)
 
 
 async def _process_group_task(message: types.Message, text: str):
+    """Guruhga xabar yuborish."""
     from config.settings import GROUP_ID
-    
+
     ai = AIAnalyzer()
-    # Taskni analiz qilish va guruhga mos formatga keltirish
     await message.answer("🤖 Vazifa tahlil qilinmoqda...")
     result = await ai.analyze_task(text)
-    
+
     if result.get("can_do"):
         if result.get("action") == "send_to_group":
             if not GROUP_ID:
-                await message.answer("❌ GROUP_ID sozlanmagan. Xabar yubora olmayman.")
+                await message.answer("❌ GROUP_ID sozlanmagan.")
                 return
-            
-            formatted_text = result.get("formatted_text")
+            formatted = result.get("formatted_text", "")
             try:
-                await message.bot.send_message(chat_id=GROUP_ID, text=formatted_text)
-                await message.answer(f"✅ Guruhga yuborildi:\n\n{formatted_text}")
+                await message.bot.send_message(chat_id=GROUP_ID, text=formatted)
+                await message.answer(f"✅ Guruhga yuborildi:\n\n{formatted}")
             except Exception as e:
-                logger.error(f"Group send error: {e}")
-                await message.answer(f"❌ Xatolik yuz berdi: {e}")
+                logger.error(f"Group send xato: {e}")
+                await message.answer(f"❌ Yuborishda xatolik: {e}")
         else:
-            await message.answer(f"🤖 Task tahlili: {result.get('message')}")
+            await message.answer(f"🤖 {result.get('message', '')}")
     else:
-        error_msg = result.get('message', 'Nomalum sabab')
-        await message.answer(f"❌ Kechirasiz, bu vazifani bajara olmayman: {error_msg}")
+        reason = result.get("message") or "Noma'lum sabab"
+        await message.answer(f"❌ Kechirasiz, bu vazifani bajara olmayman: {reason}")
 
 
-async def _process_object_search(message: types.Message, text_lower: str):
+async def _process_object_search(message: types.Message, text: str):
+    """
+    Tabiiy tildan kampaniya/adset/reklama qidiradi.
+    Ham aniq prefikslarni, ham oddiy so'zlashuvni tushunadi.
+    """
     meta = MetaActionsService()
-    
-    obj_type = "campaigns"
-    query = ""
-    
-    if text_lower.startswith("adset qidir:"):
-        obj_type = "adsets"
-        query = text_lower.replace("adset qidir:", "").strip()
-    elif text_lower.startswith("campaign qidir:"):
-        obj_type = "campaigns"
-        query = text_lower.replace("campaign qidir:", "").strip()
-    elif text_lower.startswith("ads qidir:") or text_lower.startswith("reklamani top:"):
-        obj_type = "ads"
-        query = text_lower.replace("ads qidir:", "").replace("reklamani top:", "").strip()
-        
+
+    query, obj_type = extract_search_params(text)
+
     if not query:
-        await message.answer("⚠️ Qidiruv so'zini kiriting.")
+        await message.answer(
+            "🔍 Qidiruv uchun nom kiriting.\n\n"
+            "Misol:\n"
+            "• bazaltni qidir\n"
+            "• campaign qidir: remont\n"
+            "• adset qidir: uy\n"
+            "• reklamalarni ko'rsat"
+        )
         return
-        
-    await message.answer(f"🔍 {obj_type} bo'yicha qidirilmoqda: '{query}'...")
+
+    await message.answer(f"🔍 {obj_type} bo'yicha qidirilmoqda: «{query}»...")
     matches = await meta.search_objects(query, obj_type)
-    
+
     if not matches:
-        await message.answer(f"❌ '{query}' bo'yicha hech qanday {obj_type} topilmadi.")
+        await message.answer(
+            f"❌ «{query}» bo'yicha {obj_type} topilmadi.\n\n"
+            "Nom to'g'rimi? Boshqa so'z bilan sinab ko'ring."
+        )
         return
-        
-    result_text = f"✅ Topildi ({len(matches)} ta):\n\n"
+
+    result_text = f"✅ Topildi: {len(matches)} ta {obj_type}\n\n"
     for obj in matches[:10]:
-        result_text += f"📋 Nomi: {obj.get('name')}\n"
-        result_text += f"🔢 ID: {obj.get('id')}\n"
-        result_text += f"📊 Status: {obj.get('status')}\n\n"
-        
-    await message.answer(result_text)
+        status = obj.get("status", "?")
+        status_emoji = "🟢" if status == "ACTIVE" else "🔴" if status == "PAUSED" else "⚪️"
+        result_text += (
+            f"{status_emoji} *{obj.get('name', '?')}*\n"
+            f"   ID: `{obj.get('id', '?')}` | Status: {status}\n\n"
+        )
+
+    if len(matches) > 10:
+        result_text += f"_... va yana {len(matches) - 10} ta_"
+
+    await message.answer(result_text, parse_mode="Markdown")

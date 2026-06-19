@@ -219,13 +219,13 @@ class MetaAdsService:
         return data
 
     async def get_active_campaigns_list(self) -> list:
-        """Faol kampaniyalar ro'yxatini oladi (insights emas, to'g'ridan-to'g'ri)."""
+        """Faqat ACTIVE kampaniyalar ro'yxatini oladi."""
         if not self.access_token or not self.account_id:
             return []
         url = f"{self.base_url}/{self.account_id}/campaigns"
         params = {
             "access_token": self.access_token,
-            "fields": "id,name,status",
+            "fields": "id,name,status,effective_status",
             "effective_status": '["ACTIVE"]',
             "limit": 100,
         }
@@ -235,7 +235,12 @@ class MetaAdsService:
                     if resp.status != 200:
                         return []
                     result = await resp.json()
-                    return result.get("data", [])
+                    all_camps = result.get("data", [])
+                    # Python tomonida ham filter — faqat ACTIVE
+                    return [
+                        c for c in all_camps
+                        if c.get("effective_status") == "ACTIVE" or c.get("status") == "ACTIVE"
+                    ]
         except Exception as e:
             logger.error(f"Active campaigns list xato: {e}")
             return []

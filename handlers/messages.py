@@ -1,8 +1,10 @@
 from aiogram import Router, F, types
+from aiogram.fsm.context import FSMContext
 from services.ai_analyzer import AIAnalyzer
 from services.report_builder import build_target_report
 from services.meta_ads_service import MetaAdsService
 from services.date_parser import is_date_request, parse_date_request
+from services.cpl_limits import get_all_limits
 from handlers.actions import handle_action_request
 from utils.intent_classifier import detect_intent
 from config.settings import ADMIN_ID
@@ -39,7 +41,7 @@ STATS_KEYWORDS = [
 ]
 
 @router.message(F.text)
-async def handle_text_message(message: types.Message):
+async def handle_text_message(message: types.Message, state: FSMContext = None):
     text = message.text.strip()
     text_lower = text.lower()
     user_id = message.from_user.id
@@ -112,7 +114,38 @@ async def handle_text_message(message: types.Message):
         return
 
     # ============================================
-    # D) META_ACTION (O'zgartirishlar, pause, budget)
+    # D) CPL_LIMIT (Limit o'rnatish/ko'rish)
+    # ============================================
+    if intent == "CPL_LIMIT":
+        if not user_admin:
+            await message.answer("❌ Bu amal faqat admin uchun mavjud.")
+            return
+
+        # "ko'r", "kor", "ko'rsat", "qancha", "nechi" so'zlari bo'lsa - limitlarni ko'rsat
+        view_keywords = ["ko'r", "kor", "ko'rsat", "korsat", "qancha", "nechi", "necha", "bor", "qaysi"]
+        if any(kw in text_lower for kw in view_keywords):
+            limits = get_all_limits()
+            if not limits:
+                await message.answer(
+                    "📋 Hozircha hech qanday CPL limit o'rnatilmagan.\n\n"
+                    "Limit o'rnatish uchun: /setlimit"
+                )
+            else:
+                lines = ["📊 <b>CPL LIMITLAR</b>\n"]
+                for cid, info in limits.items():
+                    cname = info.get("campaign_name", "Noma'lum")
+                    cpl_limit = info.get("cpl_limit", 0)
+                    lines.append(f"🎯 {cname}\n   🚫 Max CPL: ${cpl_limit:.2f}")
+                lines.append("\n📝 O'zgartirish: /setlimit")
+                await message.answer("\n".join(lines), parse_mode="HTML")
+        else:
+            # Limit o'rnatish — setlimit flow ga yo'naltirish
+            from handlers.commands import cmd_setlimit
+            await cmd_setlimit(message, state)
+        return
+
+    # ============================================
+    # E) META_ACTION (O'zgartirishlar, pause, budget)
     # ============================================
     if intent == "META_ACTION":
         if not user_admin:
@@ -124,7 +157,7 @@ async def handle_text_message(message: types.Message):
             return
 
     # ============================================
-    # E) OBJECT_SEARCH (Faqat aniq qidiruv buyruqlari)
+    # F) OBJECT_SEARCH (Faqat aniq qidiruv buyruqlari)
     # ============================================
     if intent == "OBJECT_SEARCH":
         if not user_admin:
@@ -135,7 +168,7 @@ async def handle_text_message(message: types.Message):
         return
 
     # ============================================
-    # F) AI_CHAT / DEFAULT (Qolgan holatlar)
+    # G) AI_CHAT / DEFAULT (Qolgan holatlar)
     # ============================================
     is_confidential = any(kw in text_lower for kw in ADMIN_ONLY_KEYWORDS)
     if is_confidential and not user_admin:

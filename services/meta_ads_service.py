@@ -140,7 +140,7 @@ class MetaAdsService:
         url = f"{self.base_url}/{self.account_id}/insights"
         params = {
             "access_token": self.access_token,
-            "fields": "campaign_name,spend,impressions,reach,cpc,cpm,ctr,frequency,actions",
+            "fields": "campaign_id,campaign_name,spend,impressions,reach,cpc,cpm,ctr,frequency,actions",
             "level": "campaign",
             "limit": 50,
             **date_params,
@@ -215,4 +215,27 @@ class MetaAdsService:
     def _parse_campaign_data(self, raw: dict) -> dict:
         data = self._parse_account_data(raw)
         data["campaign_name"] = raw.get("campaign_name", "Noma'lum")
+        data["id"] = raw.get("campaign_id", "")
         return data
+
+    async def get_active_campaigns_list(self) -> list:
+        """Faol kampaniyalar ro'yxatini oladi (insights emas, to'g'ridan-to'g'ri)."""
+        if not self.access_token or not self.account_id:
+            return []
+        url = f"{self.base_url}/{self.account_id}/campaigns"
+        params = {
+            "access_token": self.access_token,
+            "fields": "id,name,status",
+            "effective_status": '["ACTIVE"]',
+            "limit": 100,
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, params=params, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    if resp.status != 200:
+                        return []
+                    result = await resp.json()
+                    return result.get("data", [])
+        except Exception as e:
+            logger.error(f"Active campaigns list xato: {e}")
+            return []

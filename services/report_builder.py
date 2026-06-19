@@ -113,6 +113,34 @@ def _build_admin_part(campaigns: list) -> str:
     )
 
 
+def build_sms_campaigns_report(campaigns: list, date_range_text: str, total_data: dict = None) -> str:
+    """
+    SMS uchun qisqa kampaniya hisoboti.
+    Har bir kampaniya: "AB | lead: 5 | CPL: $3.00 | Spend: $15.00"
+    """
+    lines = [f"📊 TARGET HISOBOTI\n📅 {date_range_text}\n"]
+
+    if not campaigns:
+        lines.append("📋 Faol kampaniyalar topilmadi.")
+    else:
+        for c in campaigns:
+            name = c.get("campaign_name", "Noma'lum")
+            leads = c.get("leads", 0)
+            spend = c.get("spend", 0.0)
+            cpl = c.get("cpl", 0.0)
+
+            cpl_text = f"${cpl:.2f}" if leads > 0 else "—"
+            lines.append(f"🎯 {name} | lead: {leads} | CPL: {cpl_text} | 💰${spend:.2f}")
+
+    if total_data:
+        total_leads = total_data.get("leads", 0)
+        total_spend = total_data.get("spend", 0.0)
+        total_cpl = f"${total_data['cpl']:.2f}" if total_leads > 0 else "—"
+        lines.append(f"\n📊 Jami: 💰${total_spend:.2f} | 📩{total_leads} lead | CPL: {total_cpl}")
+
+    return "\n".join(lines)
+
+
 async def build_campaigns_report(period: str) -> str:
     """Kampaniyalar bo'yicha batafsil hisobot (admin uchun)."""
     try:

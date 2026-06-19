@@ -8,6 +8,7 @@ from aiogram import Router, F, types
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from services.meta_actions_service import MetaActionsService
 from services.ai_analyzer import AIAnalyzer
+from services.cpl_limits import set_limit, mark_campaign_seen
 from config.settings import ADMIN_ID
 from utils.logger import logger
 
@@ -271,6 +272,57 @@ async def on_cancel(callback: types.CallbackQuery):
     pending_actions.pop(action_id, None)
     await callback.message.edit_text("❌ Amal bekor qilindi.")
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("cpl_limit_"))
+async def on_cpl_limit_set(callback: types.CallbackQuery):
+    """Yangi kampaniya uchun CPL limit belgilash (scheduler tomonidan so'ralganda)."""
+    if not is_admin(callback.from_user.id):
+        await callback.answer("❌ Faqat admin.", show_alert=True)
+        return
+
+    # Format: cpl_limit_{campaign_id}_{value}
+    data = callback.data.replace("cpl_limit_", "")
+    parts = data.rsplit("_", 1)
+    if len(parts) != 2:
+        await callback.answer("❌ Xato format.", show_alert=True)
+        return
+
+    cid = parts[0]
+    val_str = parts[1]
+
+    if val_str == "skip":
+        mark_campaign_seen(cid)
+        await callback.message.edit_text(
+            f"⏭ O'tkazib yuborildi.\n\nKeyinchalik /setlimit orqali limit qo'yishingiz mumkin."
+        )
+        await callback.answer()
+        return
+
+    try:
+        val = float(val_str)
+    except ValueError:
+        await callback.answer("❌ Noto'g'ri qiymat.", show_alert=True)
+        return
+
+    # Kampaniya nomini xabardan olish
+    text = callback.message.text or ""
+    cname = "Noma'lum"
+    for line in text.split("\n"):
+        if "Nomi:" in line:
+            cname = line.replace("Nomi:", "").strip()
+            break
+
+    set_limit(cid, cname, val)
+    await callback.message.edit_text(
+        f"✅ <b>CPL Limit o'rnatildi!</b>\n\n"
+        f"📋 Kampaniya: {cname}\n"
+        f"🚫 Max CPL: <b>${val:.2f}</b>\n\n"
+        f"CPL bu miqdordan oshsa, kampaniya avtomatik to'xtatiladi va sizga xabar yuboriladi.",
+        parse_mode="HTML"
+    )
+    await callback.answer(f"✅ CPL limit ${val:.2f} o'rnatildi!")
+    logger.info(f"CPL limit o'rnatildi: {cname} ({cid}) → ${val}")
 
 
 @router.callback_query(F.data.startswith("select_"))

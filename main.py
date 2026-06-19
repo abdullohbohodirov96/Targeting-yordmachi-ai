@@ -1,5 +1,6 @@
 import asyncio
 from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.exceptions import TelegramConflictError
 from config.settings import (
     BOT_TOKEN, ADMIN_ID, OPENAI_API_KEY,
@@ -28,7 +29,7 @@ async def main():
         logger.warning("⚠️ Meta Ads credentials sozlanmagan! Hisobotlar ishlamaydi.")
 
     bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher()
+    dp = Dispatcher(storage=MemoryStorage())
 
     dp.include_router(commands.router)
     dp.include_router(messages.router)

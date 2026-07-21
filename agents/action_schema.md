@@ -26,7 +26,9 @@ faqat taklif beradi.
         "audience_change": {
           "location_current_city_only": true,
           "disable_expansion": true,
-          "add_region_question_to_form": true
+          "add_region_question_to_form": true,
+          "targeting": "adjust_audience uchun MAJBURIY: adset'ning YANGI TO'LIQ targeting obyekti (Meta Graph API formatida, joriy targeting'ga asoslanib, faqat kerakli qismini o'zgartirib). meta_api.update_targeting() shu obyektni to'g'ridan-to'g'ri ishlatadi.",
+          "geo_lookup_needed": ["Chirchiq", "Zangiota"]
         }
       },
       "risk_level": "low | medium | high",
@@ -35,6 +37,14 @@ faqat taklif beradi.
   ]
 }
 ```
+
+## geo_lookup_needed (hudud nomini Meta kalitiga aylantirish)
+Agar action hudud/shahar QO'SHISH yoki CHIQARISH (exclude) talab qilsa-yu, sizda
+o'sha joyning rasmiy Meta geo-target kaliti bo'lmasa — `type: "no_action"` bilan
+javob qaytaring va `params.geo_lookup_needed` ro'yxatida joy nomlarini bering.
+Orchestrator ularni `meta_api.search_geo_location()` orqali qidirib, natijalarni
+sizga qayta yuboradi — shundan keyingina haqiqiy `targeting` obyektini tuzing.
+**Hech qachon shahar/tuman kalitini o'zingiz o'ylab topmang.**
 
 ## Risk darajalari (Targetolog o'zi belgilaydi)
 - **low** — kichik byudjet o'zgarishi (≤20%), kreativ almashtirish taklifi, tahlil.

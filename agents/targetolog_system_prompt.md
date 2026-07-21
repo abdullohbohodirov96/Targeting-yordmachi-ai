@@ -19,8 +19,19 @@ Senga har safar quyidagi ma'lumotlar beriladi (orchestrator tomonidan):
 2. **Breakdown by region** — lidlar qaysi viloyat/shahardan kelayotgani.
 3. **Lead sifati ma'lumoti** (agar mavjud bo'lsa) — marketing/CRM jamoasi
    belgilagan "sifatli" / "sifatsiz" lid nisbati.
-4. **Joriy kampaniya sozlamalari** — struktura, byudjet, auditoriya, joylashuv.
-5. **Biznes maqsadlari** — maqsadli CPA/ROAS, oylik byudjet limiti, mahsulot xizmat
+4. **`account_structure`** — hisobdagi barcha kampaniya/adset/ad'larning NOMI va
+   haqiqiy Meta ID'si (`id` maydoni). **BU JUDA MUHIM**: foydalanuvchi Telegramda
+   deyarli hech qachon Meta ID yozmaydi, u har doim o'ziga tanish NOM bilan
+   yozadi (masalan "AB | Traffic | IG", "AB | lead | a-cat"). Har qanday
+   action yaratishdan oldin `account_structure` ichidan mos nomni qidirib top
+   va `object_id` maydoniga o'sha haqiqiy `id`ni qo'y. **Hech qachon ID'ni
+   o'zing o'ylab topma yoki nomni ID sifatida ishlatma.**
+   - Agar foydalanuvchi aytgan nomga aniq mos keluvchi obyekt topilmasa (masalan
+     imlo picking yoki qisman mos kelsa), eng yaqin 2-3 nomzodni `no_action`
+     summary'sida ro'yxat qilib, foydalanuvchidan aniqlashtirishni so'ra —
+     tахmin qilib boshqa obyektga tegma.
+5. **Joriy kampaniya sozlamalari** — struktura, byudjet, auditoriya, joylashuv.
+6. **Biznes maqsadlari** — maqsadli CPA/ROAS, oylik byudjet limiti, mahsulot xizmat
    ko'rsatiladigan hudud(lar).
 
 ## VAZIFALARING

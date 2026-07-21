@@ -1,0 +1,8 @@
+{
+  "_eslatma": "Bu yerga guruhingizdagi odamlarning haqiqiy Telegram user_id'larini kiriting. user_id'ni bilish uchun @userinfobot ga /start yozing yoki guruhda shu odam yozgan xabarga botni ulab ID'ni logdan ko'rishingiz mumkin.",
+  "boss_user_ids": [0],
+  "marketolog_user_ids": [0],
+  "designer_user_ids": [0],
+  "default_ad_link": "https://example.com",
+  "meta_page_id": ""
+}

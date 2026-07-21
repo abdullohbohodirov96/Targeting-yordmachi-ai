@@ -29,6 +29,7 @@ GRAPH_URL = f"https://graph.facebook.com/{GRAPH_API_VERSION}"
 
 ACCESS_TOKEN = os.environ.get("META_ACCESS_TOKEN", "")
 AD_ACCOUNT_ID = os.environ.get("META_AD_ACCOUNT_ID", "")  # format: act_1234567890
+PAGE_ID = os.environ.get("META_PAGE_ID", "")  # Facebook Page ID (ad creative uchun)
 
 
 class MetaAPIError(Exception):
@@ -36,7 +37,10 @@ class MetaAPIError(Exception):
 
 
 def _get(path: str, params: dict | None = None) -> dict:
-    params = dict(params or {})
+    params = {
+        k: (json.dumps(v) if isinstance(v, (dict, list)) else v)
+        for k, v in (params or {}).items()
+    }
     params["access_token"] = ACCESS_TOKEN
     r = requests.get(f"{GRAPH_URL}/{path}", params=params, timeout=30)
     data = r.json()
@@ -131,6 +135,25 @@ def get_active_ads(adset_id: str | None = None) -> list[dict]:
     return data.get("data", [])
 
 
+def get_account_structure() -> dict:
+    """Kampaniya -> Adset -> Ad daraxtini NOM va ID bilan birga qaytaradi.
+
+    Bu funksiya juda muhim: foydalanuvchi Telegramda "AB | Traffic | IG" kabi
+    o'ziga tanish NOM bilan buyruq beradi (hech kim Meta ID'ni yodlab yurmaydi).
+    Targetolog action yaratishdan oldin shu ro'yxatdan mos nomni topib, haqiqiy
+    `id`ni ishlatishi kerak — aks holda action bajarilmaydi."""
+    campaigns = _get(f"{AD_ACCOUNT_ID}/campaigns", {
+        "fields": "id,name,status,objective", "limit": 200,
+    }).get("data", [])
+    adsets = _get(f"{AD_ACCOUNT_ID}/adsets", {
+        "fields": "id,name,status,campaign_id,daily_budget,targeting", "limit": 200,
+    }).get("data", [])
+    ads = _get(f"{AD_ACCOUNT_ID}/ads", {
+        "fields": "id,name,status,adset_id,campaign_id", "limit": 200,
+    }).get("data", [])
+    return {"campaigns": campaigns, "adsets": adsets, "ads": ads}
+
+
 # ---------------------------------------------------------------------------
 # ON/OFF VA BYUDJET BOSHQARUVI
 # ---------------------------------------------------------------------------
@@ -178,6 +201,21 @@ def set_location_current_city_only(adset_id: str, city_key: str) -> dict:
 def update_targeting(adset_id: str, targeting: dict) -> dict:
     """Ad Set auditoriyasini to'liq yangi targeting spec bilan almashtiradi."""
     return _post(adset_id, {"targeting": targeting})
+
+
+def search_geo_location(query: str, location_types: list[str] | None = None) -> list[dict]:
+    """Erkin matndagi joy nomini (masalan 'Chirchiq', 'Zangiota tumani') Meta'ning
+    rasmiy geo-target kaliti va turiga bog'laydi. Bir nechta nomzod qaytishi mumkin
+    (bir xil nomli joylar turli davlatlarda bo'lishi mumkin) — Targetolog davlat/
+    kontekstga qarab eng mosini tanlashi kerak. Natija elementlari odatda:
+    {"key": "...", "name": "...", "type": "city"|"region"|"country"|..., "country_code": "UZ", ...}
+    Bu funksiyasiz shahar/tuman nomlarini exclude/include qilib bo'lmaydi — Meta
+    faqat raqamli `key` bilan ishlaydi, nom bilan emas."""
+    params = {"type": "adgeolocation", "q": query}
+    if location_types:
+        params["location_types"] = location_types
+    data = _get("search", params)
+    return data.get("data", [])
 
 
 # ---------------------------------------------------------------------------

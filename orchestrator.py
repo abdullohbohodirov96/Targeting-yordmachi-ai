@@ -61,6 +61,9 @@ ACTION_EXECUTORS = {
     "fix_region_targeting": lambda a: meta_api.set_location_current_city_only(
         a["object_id"], a["params"]["audience_change"]["city_key"]
     ),
+    "adjust_audience": lambda a: meta_api.update_targeting(
+        a["object_id"], a["params"]["audience_change"]["targeting"]
+    ),
     "launch_campaign": lambda a: _execute_launch_campaign(a),
     "start_ab_test": lambda a: _execute_ab_test(a),
     "conclude_ab_test": lambda a: (
@@ -132,6 +135,14 @@ def _execute_ab_test(action: dict) -> dict:
 AUTO_EXECUTABLE_TYPES = set(ACTION_EXECUTORS.keys())
 
 
+class TargetologFormatError(Exception):
+    """Model kutilgan JSON o'rniga erkin matn qaytarganda ko'tariladi (masalan,
+    unga kerakli ma'lumot — kampaniya/adset ID — yetishmasa)."""
+    def __init__(self, raw_text: str):
+        self.raw_text = raw_text
+        super().__init__("Model JSON formatda javob bermadi")
+
+
 def _call_agent(system_prompt: str, user_content: str) -> dict:
     response = client.messages.create(
         model=MODEL,
@@ -146,16 +157,21 @@ def _call_agent(system_prompt: str, user_content: str) -> dict:
         text = text.split("```")[1]
         if text.startswith("json"):
             text = text[4:]
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise TargetologFormatError(text) from e
 
 
 def gather_data() -> dict:
     """Meta API'dan tahlil uchun kerakli barcha ma'lumotni yig'adi."""
+    account_structure = meta_api.get_account_structure()
     ad_insights = meta_api.get_insights(level="ad", date_preset="last_7d")
     region_breakdown = meta_api.get_insights(
         level="ad", date_preset="last_7d", breakdowns=["region"]
     )
     return {
+        "account_structure": account_structure,
         "ad_insights": ad_insights,
         "region_breakdown": region_breakdown,
         "business_rules": BUSINESS_RULES,
@@ -163,23 +179,51 @@ def gather_data() -> dict:
     }
 
 
+def _format_json_error(e: "TargetologFormatError", stage: str = "Targetolog") -> str:
+    logger.error("%s JSON qaytarmadi. Xom javob: %s", stage, e.raw_text[:1000])
+    return (
+        f"⚠️ Buyruqni to'liq amalga oshira olmadim ({stage} bosqichida) — kerakli "
+        "ma'lumot (masalan aniq kampaniya/adset nomi yoki ID) yetarli emas edi, "
+        "yoki so'rov juda murakkab bo'ldi.\n\n"
+        "Model qanday javob berganini ko'rsataman (bu bajarilmadi, faqat matn):\n\n"
+        f"{e.raw_text[:1200]}"
+    )
+
+
 def _run_pipeline(targetolog_user_message: str, dry_run: bool = False) -> str:
     """Targetolog -> Marketolog -> ijro zanjirining umumiy o'zagi. Buni ham
     to'liq hisob tahlili (`run_analysis_cycle`), ham Telegram'dagi erkin
     buyruqlar (`handle_chat_command`) chaqiradi — ikkalasi ham xuddi shu
     ikki bosqichli nazoratdan o'tadi."""
-
     logger.info("Targetolog agentga so'rov yuborilmoqda...")
-    targetolog_plan = _call_agent(TARGETOLOG_SYSTEM, targetolog_user_message)
+    try:
+        targetolog_plan = _call_agent(TARGETOLOG_SYSTEM, targetolog_user_message)
+    except TargetologFormatError as e:
+        return _format_json_error(e, "Targetolog")
+    return _finish_pipeline(targetolog_plan, dry_run)
 
+
+def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
+    """Targetolog allaqachon tuzgan action_plan'ni Marketolog'ga tekshirtiradi
+    va tasdiqlangan action'larni ijro etadi. `_run_pipeline` va geo-lookup
+    ikki bosqichli oqimi (`_run_pipeline_command`) ikkalasi ham shu yerga kelib
+    tugaydi."""
     logger.info("Marketolog agent tekshirmoqda...")
-    marketolog_review = _call_agent(
-        MARKETOLOG_SYSTEM,
-        "Targetolog taklif qilgan action_plan:\n\n"
-        f"{json.dumps(targetolog_plan, ensure_ascii=False, indent=2)}\n\n"
-        "Biznes qoidalari:\n"
-        f"{json.dumps(BUSINESS_RULES, ensure_ascii=False, indent=2)}",
-    )
+    try:
+        marketolog_review = _call_agent(
+            MARKETOLOG_SYSTEM,
+            "Targetolog taklif qilgan action_plan:\n\n"
+            f"{json.dumps(targetolog_plan, ensure_ascii=False, indent=2)}\n\n"
+            "Biznes qoidalari:\n"
+            f"{json.dumps(BUSINESS_RULES, ensure_ascii=False, indent=2)}",
+        )
+    except TargetologFormatError as e:
+        logger.error("Marketolog JSON qaytarmadi. Xom javob: %s", e.raw_text[:1000])
+        return (
+            "⚠️ Targetolog taklif berdi, lekin Marketolog tekshiruvida ichki xatolik "
+            "yuz berdi. Qaytadan urinib ko'ring.\n\n"
+            f"Targetolog taklifi: {targetolog_plan.get('summary', '')}"
+        )
 
     executed, skipped = [], []
     if not dry_run:
@@ -278,9 +322,13 @@ def handle_chat_command(user_text: str, recent_history: list[dict] | None = None
         max_tokens=20,
         system=(
             "Foydalanuvchi xabari qaysi turga kiradi? Faqat bitta so'z bilan javob ber:\n"
-            "ACTION — agar amaliy buyruq bo'lsa (yangi target/kampaniya yoqish, mavjud "
-            "reklamani to'xtatish/yoqish, byudjet o'zgartirish, abtest boshlash) yoki shu "
-            "buyruqqa javoban berilgan qo'shimcha ma'lumot (byudjet raqami, shahar nomi).\n"
+            "ACTION — agar amaliy buyruq bo'lsa: yangi target/kampaniya yoqish, mavjud "
+            "reklamani to'xtatish/yoqish, byudjet o'zgartirish, abtest boshlash, auditoriya/"
+            "hudud o'zgartirish (masalan biror viloyat/shaharni QO'SHISH yoki OLIB TASHLASH/"
+            "EXCLUDE qilish, \"faqat X qolsin\", \"Y'ni chiqarib tashla\"), yoki shu buyruqqa "
+            "javoban berilgan qo'shimcha ma'lumot (byudjet raqami, shahar nomi). Foydalanuvchi "
+            "kampaniya/adset nomini o'z uslubida yozishi mumkin (masalan \"AB | Traffic | IG\", "
+            "qisqartmalar, \" | \" bilan ajratilgan nomlar) — bu ham ACTION, GENERAL emas.\n"
             "METRIC — agar haqiqiy hisobdagi aniq raqam/metrika so'ralayotgan bo'lsa "
             "(masalan: 'video necha kishi ko'rgan', 'CPA qancha', 'necha % odam 15 "
             "soniyani ko'rgan', 'bugungi xarajat qancha').\n"
@@ -299,16 +347,66 @@ def handle_chat_command(user_text: str, recent_history: list[dict] | None = None
 
 
 def _run_pipeline_command(user_text: str, history_text: str) -> str:
-    return _run_pipeline(
+    # MUHIM: foydalanuvchi kampaniya/adset'ni ko'pincha NOM bilan ataydi
+    # (masalan "AB | Traffic | IG"), Meta ID bilan emas. Shuning uchun har bir
+    # amaliy buyruqdan oldin joriy hisob strukturasini (nom + haqiqiy ID)
+    # Targetologga beramiz — aks holda u ID'ni bila olmay, action_plan o'rniga
+    # oddiy matnli tavsiya yozib qo'yadi (bajarilmagan bo'lib qoladi).
+    try:
+        account_structure = meta_api.get_account_structure()
+        structure_json = json.dumps(account_structure, ensure_ascii=False, indent=2)
+    except meta_api.MetaAPIError as e:
+        return f"⚠️ Meta hisobi bilan bog'lanib bo'lmadi: {e}"
+
+    message = (
         "Foydalanuvchi Telegram orqali quyidagi amaliy buyruqni berdi (kerak bo'lsa "
         f"suhbat konteksti bilan birga):{history_text}\n\n"
         f"Yangi xabar: \"{user_text}\"\n\n"
-        "Agar bu yangi targeting ishga tushirish bo'lsa, lekin kerakli ma'lumotlar "
-        "(soha, maqsad, kunlik byudjet, hudud) yetarli bo'lmasa — `no_action` qaytarib, "
-        "`summary` maydonida foydalanuvchidan aynan qaysi ma'lumot yetishmayotganini so'rang. "
-        "Yetarli bo'lsa, to'liq action_plan tuzing.",
-        dry_run=False,
+        "Joriy hisobdagi kampaniya/adset/ad nomlari, ID'lari va joriy targeting "
+        f"sozlamalari (adset.targeting maydonida):\n{structure_json}\n\n"
+        "Agar buyruqda hudud/shahar/tuman nomi (masalan \"Chirchiq\", \"Zangiota\") "
+        "qo'shish yoki chiqarib tashlash (exclude) kerak bo'lsa-yu, lekin sizda "
+        "ularning Meta rasmiy geo-target kaliti (key) yo'q bo'lsa — `no_action` "
+        "qaytarib, `actions[0].params.geo_lookup_needed` ro'yxatida shu joy "
+        "nomlarini bering (masalan [\"Chirchiq\", \"Zangiota\"]) — bu ro'yxat "
+        "berilsa, sizga ularning haqiqiy kalitlari alohida yuboriladi va qayta "
+        "so'ralasiz.\n"
+        "Agar buyruqdagi nomga mos kampaniya/adset topilmasa YOKI yangi targeting "
+        "uchun ma'lumot (soha, maqsad, byudjet, hudud) yetarli bo'lmasa — `no_action` "
+        "qaytarib aniq nima yetishmayotganini `summary`da so'rang. Aks holda to'liq "
+        "action_plan tuzing (haqiqiy ID va to'liq targeting obyekti bilan)."
     )
+
+    try:
+        targetolog_plan = _call_agent(TARGETOLOG_SYSTEM, message)
+    except TargetologFormatError as e:
+        return _format_json_error(e, "Targetolog")
+
+    # Ikkinchi bosqich: agar Targetolog hudud nomlarining Meta kalitini so'ragan
+    # bo'lsa, ularni haqiqatan Meta'dan qidirib topamiz va qayta so'raymiz.
+    first_action = (targetolog_plan.get("actions") or [{}])[0]
+    geo_lookup_needed = (first_action.get("params") or {}).get("geo_lookup_needed")
+    if first_action.get("type") == "no_action" and geo_lookup_needed:
+        geo_candidates = {}
+        for place in geo_lookup_needed:
+            try:
+                geo_candidates[place] = meta_api.search_geo_location(place)
+            except meta_api.MetaAPIError as e:
+                geo_candidates[place] = {"error": str(e)}
+
+        followup_message = (
+            message + "\n\n---\n\nSiz so'ragan hudud nomlari uchun Meta'dan "
+            "topilgan rasmiy geo-target nomzodlari (har biri uchun eng mos "
+            f"variantni tanlang):\n{json.dumps(geo_candidates, ensure_ascii=False, indent=2)}\n\n"
+            "Endi shu kalitlar bilan to'liq action_plan tuzing. Agar biror joy "
+            "uchun mos nomzod topilmasa, `no_action` qaytarib buni ochiq ayting."
+        )
+        try:
+            targetolog_plan = _call_agent(TARGETOLOG_SYSTEM, followup_message)
+        except TargetologFormatError as e:
+            return _format_json_error(e, "Targetolog (geo-lookup)")
+
+    return _finish_pipeline(targetolog_plan, dry_run=False)
 
 
 def answer_data_question(user_text: str, history_text: str = "") -> str:

@@ -120,8 +120,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         command_result = orchestrator.handle_chat_command(user_text, recent_history=history)
     except Exception as e:
+        # MUHIM: bu yerda jim qolib, oddiy maslahat rejimiga "yashirincha"
+        # tushib ketmaymiz — aks holda foydalanuvchi buyrug'i bajarilmagan
+        # bo'lsa ham, bot xuddi hammasi joyidek maslahat berib qo'yadi va bu
+        # aslida hech narsa qilinmaganini yashirib qo'yadi. Xatoni ochiq aytamiz.
         logger.exception("handle_chat_command xatosi")
-        command_result = None
+        await update.message.reply_text(
+            f"⚠️ Buyruqni bajarishda kutilmagan xatolik yuz berdi: {e}\n\n"
+            "Qaytadan urinib ko'ring yoki aniqroq yozing."
+        )
+        return
 
     if command_result is not None:
         last_report = command_result

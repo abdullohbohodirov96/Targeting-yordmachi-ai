@@ -100,11 +100,36 @@ def _execute_and_verify_status(object_id: str, expected_status: str) -> dict:
     return {"status": actual_status, "verified": True}
 
 
+def _require(action: dict, *path: str):
+    """`action["params"]["audience_change"]["city_key"]` kabi chuqur maydonlarga
+    XAVFSIZ kirish uchun yordamchi. Agar Targetolog kutilgan strukturani
+    bermagan bo'lsa (masalan schema'ga to'liq amal qilmasa), Python'ning xom
+    KeyError'i o'rniga aniq, tushunarli MetaAPIError ko'taradi — shu tufayli
+    butun so'rov "kutilmagan xatolik" bilan buzilib qolmaydi, foydalanuvchi
+    Telegram'da aniq nima yetishmayotganini ko'radi."""
+    node = action
+    for key in path:
+        if not isinstance(node, dict) or key not in node:
+            raise meta_api.MetaAPIError({
+                "message": (
+                    f"Targetolog action'ida kerakli maydon topilmadi: "
+                    f"{'.'.join(path)}. Model action_schema'ga to'liq amal "
+                    "qilmagan bo'lishi mumkin. Qaytadan urinib ko'ring yoki "
+                    "buyruqni boshqacharoq/aniqroq yozing."
+                ),
+                "missing_field": ".".join(path),
+                "action_received": action,
+            })
+        node = node[key]
+    return node
+
+
 def _execute_fix_region(action: dict) -> dict:
     """4.11-bo'lim: 'faqat joriy shahar' sozlamasini qo'llaydi va qayta o'qib
     tasdiqlaydi."""
-    adset_id = action["object_id"]
-    meta_api.set_location_current_city_only(adset_id, action["params"]["audience_change"]["city_key"])
+    adset_id = _require(action, "object_id")
+    city_key = _require(action, "params", "audience_change", "city_key")
+    meta_api.set_location_current_city_only(adset_id, city_key)
     verified = meta_api.get_adset_details(adset_id)
     return {"verified": True, "current_targeting": verified.get("targeting", {})}
 
@@ -114,8 +139,8 @@ def _execute_adjust_audience(action: dict) -> dict:
     KEYIN adset'ni qayta o'qib, so'ralgan o'zgarish (masalan excluded_geo_locations)
     haqiqatan saqlanganini tasdiqlaydi. Tasdiqlanmasa — bajarilgan deb ko'rsatilmaydi,
     xato sifatida qaytariladi (foydalanuvchi buni Telegram'da ❌ bilan ko'radi)."""
-    adset_id = action["object_id"]
-    new_targeting = action["params"]["audience_change"]["targeting"]
+    adset_id = _require(action, "object_id")
+    new_targeting = _require(action, "params", "audience_change", "targeting")
     meta_api.update_targeting(adset_id, new_targeting)
 
     verified = meta_api.get_adset_details(adset_id)
@@ -333,8 +358,17 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
                 result = ACTION_EXECUTORS[action_type](final_action)
                 succeeded.append({"action": final_action, "result": result})
             except meta_api.MetaAPIError as e:
-                logger.exception("Action bajarishda xatolik: %s", action_type)
+                logger.exception("Action bajarishda Meta API xatoligi: %s", action_type)
                 failed.append({"action": final_action, "error": str(e)})
+            except Exception as e:
+                # MUHIM: MetaAPIError'dan tashqari HAR QANDAY xato (masalan
+                # Targetolog kutilgan schema'ga to'liq amal qilmasa — KeyError/
+                # TypeError) ham shu yerda tutiladi. Aks holda bitta action'dagi
+                # kichik nuqson butun so'rovni "kutilmagan xatolik" bilan
+                # buzib, foydalanuvchiga hech narsa tushunarli bo'lmagan xabar
+                # ko'rsatib qo'yardi.
+                logger.exception("Action bajarishda kutilmagan xato: %s", action_type)
+                failed.append({"action": final_action, "error": f"{type(e).__name__}: {e}"})
 
     run_log = {
         "timestamp": datetime.utcnow().isoformat(),

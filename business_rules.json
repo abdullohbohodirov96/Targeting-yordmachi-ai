@@ -1,0 +1,10 @@
+{
+  "target_cpa_usd": 8.0,
+  "target_roas": 3.0,
+  "monthly_budget_cap_usd": 3000,
+  "max_daily_budget_change_percent": 20,
+  "protected_campaign_ids": [],
+  "service_regions": ["Toshkent"],
+  "auto_approve_low_risk": false,
+  "notes": "Bu faylni o'z biznesingiz raqamlariga moslab tahrirlang. Marketolog agent har bir tekshiruvda shu qoidalarga tayanadi."
+}

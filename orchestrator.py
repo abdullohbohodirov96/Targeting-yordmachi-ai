@@ -342,7 +342,7 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
     log_path.write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
 
     report_lines = [
-        "📊 *Target Master — hisobot*",
+        "📊 Target Master — hisobot",
         "",
         f"🎯 Targetolog: {targetolog_plan.get('summary', '')}",
     ]
@@ -356,7 +356,7 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
     ]
     if failed:
         report_lines.append("")
-        report_lines.append("❌ *Xatolar (Meta hisobda hech narsa o'zgarmadi):*")
+        report_lines.append("❌ Xatolar (Meta hisobda hech narsa o'zgarmadi):")
         for f in failed:
             obj_name = f["action"].get("object_name", f["action"].get("object_id", "?"))
             report_lines.append(f"  • {obj_name}: {f['error']}")

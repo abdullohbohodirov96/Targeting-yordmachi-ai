@@ -66,7 +66,11 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(last_report, parse_mode="Markdown")
+    # MUHIM: parse_mode="Markdown" ishlatilmaydi — hisobotlar/Meta xato matnlarida
+    # tez-tez "_" kabi belgilar uchraydi (masalan excluded_geo_locations), bular
+    # Telegram Markdown parserini buzib, "Can't parse entities" xatosiga olib
+    # keladi. Shuning uchun oddiy matn sifatida yuboriladi.
+    await update.message.reply_text(last_report)
 
 
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -78,7 +82,11 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.exception("Tahlil xatosi")
         last_report = f"⚠️ Tahlil vaqtida xatolik: {e}"
-    await update.message.reply_text(last_report, parse_mode="Markdown")
+    # MUHIM: parse_mode="Markdown" ishlatilmaydi — hisobotlar/Meta xato matnlarida
+    # tez-tez "_" kabi belgilar uchraydi (masalan excluded_geo_locations), bular
+    # Telegram Markdown parserini buzib, "Can't parse entities" xatosiga olib
+    # keladi. Shuning uchun oddiy matn sifatida yuboriladi.
+    await update.message.reply_text(last_report)
 
 
 async def pause_ad(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -137,7 +145,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history.append({"role": "assistant", "content": command_result})
         history[:] = history[-MAX_HISTORY_MESSAGES:]
         for i in range(0, len(command_result), 4000):
-            await update.message.reply_text(command_result[i:i + 4000], parse_mode="Markdown")
+            # parse_mode ishlatilmaydi — sabab yuqoridagi izohda
+            await update.message.reply_text(command_result[i:i + 4000])
         return
 
     # Aks holda — oddiy maslahat/Q&A rejimi (hisobga tegilmaydi)

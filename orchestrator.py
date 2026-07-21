@@ -50,20 +50,16 @@ client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 # Har bir action_plan tipi -> uni haqiqiy hisobda bajaradigan funksiya
 ACTION_EXECUTORS = {
-    "pause_ad": lambda a: meta_api.pause_object(a["object_id"]),
-    "resume_ad": lambda a: meta_api.activate_object(a["object_id"]),
+    "pause_ad": lambda a: _execute_and_verify_status(a["object_id"], "PAUSED"),
+    "resume_ad": lambda a: _execute_and_verify_status(a["object_id"], "ACTIVE"),
     "increase_budget": lambda a: meta_api.adjust_budget_by_percent(
         a["object_id"], a["params"]["current_daily_budget_cents"], abs(a["params"]["percent"])
     ),
     "decrease_budget": lambda a: meta_api.adjust_budget_by_percent(
         a["object_id"], a["params"]["current_daily_budget_cents"], -abs(a["params"]["percent"])
     ),
-    "fix_region_targeting": lambda a: meta_api.set_location_current_city_only(
-        a["object_id"], a["params"]["audience_change"]["city_key"]
-    ),
-    "adjust_audience": lambda a: meta_api.update_targeting(
-        a["object_id"], a["params"]["audience_change"]["targeting"]
-    ),
+    "fix_region_targeting": lambda a: _execute_fix_region(a),
+    "adjust_audience": lambda a: _execute_adjust_audience(a),
     "launch_campaign": lambda a: _execute_launch_campaign(a),
     "start_ab_test": lambda a: _execute_ab_test(a),
     "conclude_ab_test": lambda a: (
@@ -75,6 +71,70 @@ ACTION_EXECUTORS = {
     # bular ijodiy/qo'lda tasdiqlash talab qiladigan qadamlar (AI video/rasm yarata
     # olmaydi), shuning uchun faqat taklif sifatida odamga (Telegram orqali) ko'rsatiladi.
 }
+
+
+def _execute_and_verify_status(object_id: str, expected_status: str) -> dict:
+    """pause_ad/resume_ad uchun: Meta'ga status o'zgartirish so'rovini yuboradi,
+    KEYIN qayta o'qib haqiqatan o'zgarganini tekshiradi. Meta ba'zan
+    {"success": true} qaytaradi-yu, holat aslida o'zgarmagan bo'lishi mumkin
+    (masalan yuqori darajadagi adset/kampaniya o'chiq bo'lsa) — bu holda
+    "bajarildi" deb yolg'on hisobot berilmasligi uchun xato ko'taramiz."""
+    if expected_status == "PAUSED":
+        meta_api.pause_object(object_id)
+    else:
+        meta_api.activate_object(object_id)
+
+    info = meta_api.get_object_status(object_id)
+    actual_status = info.get("status")
+    if actual_status != expected_status:
+        raise meta_api.MetaAPIError({
+            "message": (
+                f"Meta so'rovni qabul qildi, lekin qayta tekshirganda holat "
+                f"hali ham '{actual_status}' (kutilgan: '{expected_status}'). "
+                "Ehtimol yuqori darajadagi kampaniya/adset boshqa holatda "
+                "(masalan o'zi PAUSED). Ads Manager'da qo'lda tekshiring."
+            ),
+            "expected_status": expected_status,
+            "actual_status": actual_status,
+        })
+    return {"status": actual_status, "verified": True}
+
+
+def _execute_fix_region(action: dict) -> dict:
+    """4.11-bo'lim: 'faqat joriy shahar' sozlamasini qo'llaydi va qayta o'qib
+    tasdiqlaydi."""
+    adset_id = action["object_id"]
+    meta_api.set_location_current_city_only(adset_id, action["params"]["audience_change"]["city_key"])
+    verified = meta_api.get_adset_details(adset_id)
+    return {"verified": True, "current_targeting": verified.get("targeting", {})}
+
+
+def _execute_adjust_audience(action: dict) -> dict:
+    """`adjust_audience` (masalan hudud exclude qilish): targeting'ni yangilaydi,
+    KEYIN adset'ni qayta o'qib, so'ralgan o'zgarish (masalan excluded_geo_locations)
+    haqiqatan saqlanganini tasdiqlaydi. Tasdiqlanmasa — bajarilgan deb ko'rsatilmaydi,
+    xato sifatida qaytariladi (foydalanuvchi buni Telegram'da ❌ bilan ko'radi)."""
+    adset_id = action["object_id"]
+    new_targeting = action["params"]["audience_change"]["targeting"]
+    meta_api.update_targeting(adset_id, new_targeting)
+
+    verified = meta_api.get_adset_details(adset_id)
+    actual_targeting = verified.get("targeting", {})
+
+    expected_excluded = new_targeting.get("excluded_geo_locations")
+    if expected_excluded:
+        actual_excluded = actual_targeting.get("excluded_geo_locations")
+        if not actual_excluded:
+            raise meta_api.MetaAPIError({
+                "message": (
+                    "Meta so'rovni qabul qildi, lekin qayta tekshirganda "
+                    "excluded_geo_locations bo'sh chiqdi — o'zgarish amalda "
+                    "saqlanmagan. Ads Manager'da qo'lda tekshiring."
+                ),
+                "expected_excluded_geo_locations": expected_excluded,
+                "actual_targeting": actual_targeting,
+            })
+    return {"verified": True, "current_targeting": actual_targeting}
 
 
 def _execute_launch_campaign(action: dict) -> dict:
@@ -207,25 +267,42 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
     """Targetolog allaqachon tuzgan action_plan'ni Marketolog'ga tekshirtiradi
     va tasdiqlangan action'larni ijro etadi. `_run_pipeline` va geo-lookup
     ikki bosqichli oqimi (`_run_pipeline_command`) ikkalasi ham shu yerga kelib
-    tugaydi."""
-    logger.info("Marketolog agent tekshirmoqda...")
-    try:
-        marketolog_review = _call_agent(
-            MARKETOLOG_SYSTEM,
-            "Targetolog taklif qilgan action_plan:\n\n"
-            f"{json.dumps(targetolog_plan, ensure_ascii=False, indent=2)}\n\n"
-            "Biznes qoidalari:\n"
-            f"{json.dumps(BUSINESS_RULES, ensure_ascii=False, indent=2)}",
-        )
-    except TargetologFormatError as e:
-        logger.error("Marketolog JSON qaytarmadi. Xom javob: %s", e.raw_text[:1000])
-        return (
-            "⚠️ Targetolog taklif berdi, lekin Marketolog tekshiruvida ichki xatolik "
-            "yuz berdi. Qaytadan urinib ko'ring.\n\n"
-            f"Targetolog taklifi: {targetolog_plan.get('summary', '')}"
-        )
+    tugaydi.
 
-    executed, skipped = [], []
+    `business_rules.json` dagi `skip_marketolog: true` bo'lsa, Marketolog
+    bosqichi butunlay o'tkazib yuboriladi — Targetolog taklif qilgan HAMMA
+    action to'g'ridan-to'g'ri ijroga yuboriladi (tezroq, lekin ikkinchi nazorat
+    qatlamisiz)."""
+    skip_marketolog = bool(BUSINESS_RULES.get("skip_marketolog"))
+
+    if skip_marketolog:
+        logger.info("skip_marketolog=true — Marketolog bosqichi o'tkazib yuborildi.")
+        marketolog_review = {
+            "review_summary": "(Marketolog o'tkazib yuborildi — business_rules.json: skip_marketolog=true)",
+            "decisions": [
+                {"action_index": i, "type": a["type"], "decision": "approved", "comment": "auto (skip_marketolog)"}
+                for i, a in enumerate(targetolog_plan.get("actions", []))
+            ],
+        }
+    else:
+        logger.info("Marketolog agent tekshirmoqda...")
+        try:
+            marketolog_review = _call_agent(
+                MARKETOLOG_SYSTEM,
+                "Targetolog taklif qilgan action_plan:\n\n"
+                f"{json.dumps(targetolog_plan, ensure_ascii=False, indent=2)}\n\n"
+                "Biznes qoidalari:\n"
+                f"{json.dumps(BUSINESS_RULES, ensure_ascii=False, indent=2)}",
+            )
+        except TargetologFormatError as e:
+            logger.error("Marketolog JSON qaytarmadi. Xom javob: %s", e.raw_text[:1000])
+            return (
+                "⚠️ Targetolog taklif berdi, lekin Marketolog tekshiruvida ichki xatolik "
+                "yuz berdi. Qaytadan urinib ko'ring.\n\n"
+                f"Targetolog taklifi: {targetolog_plan.get('summary', '')}"
+            )
+
+    succeeded, failed, skipped = [], [], []
     if not dry_run:
         for decision in marketolog_review.get("decisions", []):
             idx = decision["action_index"]
@@ -247,16 +324,17 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
 
             try:
                 result = ACTION_EXECUTORS[action_type](final_action)
-                executed.append({"action": final_action, "result": result})
+                succeeded.append({"action": final_action, "result": result})
             except meta_api.MetaAPIError as e:
                 logger.exception("Action bajarishda xatolik: %s", action_type)
-                executed.append({"action": final_action, "error": str(e)})
+                failed.append({"action": final_action, "error": str(e)})
 
     run_log = {
         "timestamp": datetime.utcnow().isoformat(),
         "targetolog_plan": targetolog_plan,
         "marketolog_review": marketolog_review,
-        "executed": executed,
+        "succeeded": succeeded,
+        "failed": failed,
         "skipped": skipped,
         "dry_run": dry_run,
     }
@@ -264,14 +342,24 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
     log_path.write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
 
     report_lines = [
-        "📊 *Target Master — tahlil hisoboti*",
+        "📊 *Target Master — hisobot*",
         "",
         f"🎯 Targetolog: {targetolog_plan.get('summary', '')}",
-        f"✅ Marketolog: {marketolog_review.get('review_summary', '')}",
-        "",
-        f"Bajarilgan action'lar: {len(executed)}",
-        f"Qo'lda ko'rib chiqish/rad etilgan: {len(skipped)}",
     ]
+    if not skip_marketolog:
+        report_lines.append(f"✅ Marketolog: {marketolog_review.get('review_summary', '')}")
+    report_lines += [
+        "",
+        f"✅ Muvaffaqiyatli bajarildi: {len(succeeded)}",
+        f"❌ Xato bilan tugadi: {len(failed)}",
+        f"⏭ Qo'lda ko'rib chiqish/rad etilgan: {len(skipped)}",
+    ]
+    if failed:
+        report_lines.append("")
+        report_lines.append("❌ *Xatolar (Meta hisobda hech narsa o'zgarmadi):*")
+        for f in failed:
+            obj_name = f["action"].get("object_name", f["action"].get("object_id", "?"))
+            report_lines.append(f"  • {obj_name}: {f['error']}")
     creative_or_form_actions = [
         a for a in targetolog_plan.get("actions", [])
         if a["type"] in ("replace_creative", "create_instant_form")

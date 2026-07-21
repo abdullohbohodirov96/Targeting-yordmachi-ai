@@ -39,9 +39,16 @@ telegram_bot.py                 — Telegram bot (suhbat + /analyze, /pause, /re
                                           Telegram'ga hisobot + qo'lda ish ro'yxati
 ```
 
-**Muhim:** Targetolog hech qachon to'g'ridan-to'g'ri hisobga tegmaydi. Har bir
+**Muhim:** Odatda Targetolog to'g'ridan-to'g'ri hisobga tegmaydi — har bir
 taklif avval Marketolog agent tomonidan tekshiriladi, faqat tasdiqlangani ijro
-etiladi. Bu — pulingiz xavfsizligi uchun ataylab qo'yilgan ikkinchi nazorat qatlami.
+etiladi (ikkinchi nazorat qatlami). Agar tezlik muhimroq bo'lsa,
+`business_rules.json` dagi `"skip_marketolog": true` orqali bu bosqichni
+o'tkazib yuborish mumkin — shunda Targetolog taklif qilgan HAMMA action
+to'g'ridan-to'g'ri ijro etiladi. Xavfsizlikni qaytarish uchun `false` qiling.
+
+Har bir ijro natijasi (muvaffaqiyatli/xato) Telegram hisobotida aniq ko'rsatiladi
+— agar Meta biror action'ni rad etsa (masalan "audience invalid"), bu Telegramda
+❌ belgisi bilan haqiqiy xato matni bilan ko'rinadi, hech qachon yashirilmaydi.
 
 ## Nimalar to'liq avtomatik ishlaydi
 

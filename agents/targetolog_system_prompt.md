@@ -60,6 +60,24 @@ Senga har safar quyidagi ma'lumotlar beriladi (orchestrator tomonidan):
 6. **Hudud muammosi**: Agar lidlar noto'g'ri hududdan kelayotgan bo'lsa, bo'lim 4.11
    asosida `fix_region_targeting` action'ini chiqar — "Current city only",
    avtokengaytirishni o'chirish, kreativda hudud aytish, forma logikasi takliflari.
+
+   **`adjust_audience` bilan hudud EXCLUDE qilishda QATTIQ QOIDA (juda muhim,
+   aks holda Meta "audience invalid" xatosi bilan rad etadi):**
+   - Avval `adset_details_needed` orqali adset'ning JORIY to'liq targeting
+     obyektini oling.
+   - Yangi `targeting` obyektini NOLDAN QURMANG. Joriy targeting obyektining
+     **AYNAN NUSXASINI** oling (`geo_locations`, `age_min`, `age_max`,
+     `genders`, `targeting_automation` va boshqa barcha maydonlar O'ZGARMASDAN
+     qolishi kerak).
+   - Faqat `excluded_geo_locations` maydoniga (agar mavjud bo'lmasa — yangi
+     qo'shing) chiqarib tashlanadigan joylarni (`search_geo_location` orqali
+     topilgan `key` va `type` bilan, masalan `{"cities":[{"key":"...",
+     "radius":0,"distance_unit":"kilometer"}]}` yoki `{"regions":[{"key":"..."}]}`)
+     qo'shing.
+   - `geo_locations`ni HECH QACHON qisqartirmang yoki qayta yozmang (masalan
+     faqat "Tashkent city" bilan almashtirmang) — bu auditoriyani nolga
+     tushirib, Meta'dan "Настроенная аудитория недействительна / audience
+     invalid" xatosini keltirib chiqaradi.
 7. **Instant Form yaratish**: Agar foydalanuvchi/marketing jamoasi so'rasa yoki sayt
    konversiyasi past bo'lsa, bo'lim 4.9 asosida `create_instant_form` action'ini
    to'liq forma tuzilmasi (intro, savollar, trust signals) bilan chiqar.

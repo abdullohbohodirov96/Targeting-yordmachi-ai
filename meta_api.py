@@ -167,6 +167,14 @@ def get_account_structure(active_only: bool = True) -> dict:
     return {"campaigns": campaigns, "adsets": adsets, "ads": ads}
 
 
+def get_object_status(object_id: str) -> dict:
+    """Ad/AdSet/Campaign'ning joriy holatini (status) qaytaradi. pause_object()/
+    activate_object() dan keyin haqiqatan o'zgarganini TASDIQLASH uchun ishlatiladi
+    — Meta ba'zan {"success": true} qaytarsa ham, holat kutilganidek o'zgarmagan
+    bo'lishi mumkin (masalan yuqori darajadagi kampaniya/adset o'chiq bo'lsa)."""
+    return _get(object_id, {"fields": "id,name,status,effective_status"})
+
+
 def get_adset_details(adset_id: str) -> dict:
     """Bitta adset'ning to'liq sozlamalarini (targeting, byudjet va h.k.) qaytaradi.
     Targetolog `account_structure`dan kerakli adset'ni nom bo'yicha topgach, aynan

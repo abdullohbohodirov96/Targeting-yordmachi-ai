@@ -6,5 +6,6 @@
   "protected_campaign_ids": [],
   "service_regions": ["Toshkent"],
   "auto_approve_low_risk": false,
-  "notes": "Bu faylni o'z biznesingiz raqamlariga moslab tahrirlang. Marketolog agent har bir tekshiruvda shu qoidalarga tayanadi."
+  "skip_marketolog": true,
+  "notes": "Bu faylni o'z biznesingiz raqamlariga moslab tahrirlang. Marketolog agent har bir tekshiruvda shu qoidalarga tayanadi. skip_marketolog=true bo'lsa, Targetolog taklif qilgan HAMMA action to'g'ridan-to'g'ri (Marketolog tekshiruvisiz) ijro etiladi — tezroq ishlaydi, lekin ikkinchi nazorat qatlami o'chadi. Xavfsizlikni qaytarish uchun false qiling."
 }

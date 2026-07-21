@@ -204,10 +204,17 @@ class TargetologFormatError(Exception):
 
 
 def _call_agent(system_prompt: str, user_content: str) -> dict:
+    # MUHIM (token/xarajatni kamaytirish uchun): TARGETOLOG_SYSTEM/MARKETOLOG_SYSTEM
+    # bilim bazasi bilan birga juda katta (~3-4 ming token) va HAR BIR chaqiruvda
+    # bir xil — shuning uchun uni "cache_control" bilan belgilaymiz. Anthropic API
+    # shu bloqni keshlab, keyingi 5 daqiqa ichidagi chaqiruvlarda uni ~10% narxda
+    # qayta ishlatadi (to'liq narx emas). Bitta foydalanuvchi buyrug'i uchun bir
+    # nechta chaqiruv (masalan geo-lookup ikkinchi bosqichi) bo'lsa ham, faqat
+    # birinchisi to'liq narxda hisoblanadi.
     response = client.messages.create(
         model=MODEL,
         max_tokens=4000,
-        system=system_prompt,
+        system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user_content}],
     )
     text = response.content[0].text
@@ -534,20 +541,23 @@ def answer_data_question(user_text: str, history_text: str = "") -> str:
         return f"⚠️ Meta API'dan ma'lumot olishda xatolik: {e}"
 
     data_json = json.dumps(report_data, ensure_ascii=False, indent=2)
+    data_qa_system = (
+        f"{TARGETOLOG_ROLE}\n\n---\n\n# BILIM BAZASI\n\n{KNOWLEDGE_BASE}\n\n---\n\n"
+        "MUHIM: Bu safar sendan action_plan JSON EMAS, oddiy o'zbekcha matn "
+        "javob kutilyapti. Foydalanuvchi hisobdagi aniq metrika/raqamni "
+        "so'ramoqda. Faqat senga berilgan haqiqiy `insights` ma'lumotlaridan "
+        "foydalanib javob ber (masalan foiz hisoblash: "
+        "video_thruplay_watched_actions / video_play_actions * 100). Agar "
+        "kerakli maydon ma'lumotda yo'q bo'lsa, buni ochiq ayt, o'ylab topma. "
+        "Javobni Telegram uchun qisqa va tushunarli qil, kerak bo'lsa ad/adset "
+        "nomlari bo'yicha alohida ko'rsat."
+    )
     response = client.messages.create(
         model=MODEL,
         max_tokens=1200,
-        system=(
-            f"{TARGETOLOG_ROLE}\n\n---\n\n# BILIM BAZASI\n\n{KNOWLEDGE_BASE}\n\n---\n\n"
-            "MUHIM: Bu safar sendan action_plan JSON EMAS, oddiy o'zbekcha matn "
-            "javob kutilyapti. Foydalanuvchi hisobdagi aniq metrika/raqamni "
-            "so'ramoqda. Faqat senga berilgan haqiqiy `insights` ma'lumotlaridan "
-            "foydalanib javob ber (masalan foiz hisoblash: "
-            "video_thruplay_watched_actions / video_play_actions * 100). Agar "
-            "kerakli maydon ma'lumotda yo'q bo'lsa, buni ochiq ayt, o'ylab topma. "
-            "Javobni Telegram uchun qisqa va tushunarli qil, kerak bo'lsa ad/adset "
-            "nomlari bo'yicha alohida ko'rsat."
-        ),
+        # cache_control — xuddi _call_agent'dagi kabi, statik qismini keshlab
+        # xarajatni kamaytiradi.
+        system=[{"type": "text", "text": data_qa_system, "cache_control": {"type": "ephemeral"}}],
         messages=[{
             "role": "user",
             "content": (

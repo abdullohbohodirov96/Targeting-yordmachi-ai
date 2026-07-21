@@ -75,13 +75,18 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global last_report
-    await update.message.reply_text("⏳ Tahlil boshlandi — Targetolog va Marketolog ishlamoqda...")
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    chat_id = update.effective_chat.id
+    status_message = await update.message.reply_text("⏳ Tahlil boshlandi — Targetolog va Marketolog ishlamoqda...")
+    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
     try:
         last_report = orchestrator.run_analysis_cycle(dry_run=False)
     except Exception as e:
         logger.exception("Tahlil xatosi")
         last_report = f"⚠️ Tahlil vaqtida xatolik: {e}"
+    try:
+        await context.bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
+    except Exception:
+        pass
     # MUHIM: parse_mode="Markdown" ishlatilmaydi — hisobotlar/Meta xato matnlarida
     # tez-tez "_" kabi belgilar uchraydi (masalan excluded_geo_locations), bular
     # Telegram Markdown parserini buzib, "Can't parse entities" xatosiga olib
@@ -121,6 +126,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
+    # Ish jarayonini ko'rsatuvchi vaqtinchalik xabar — foydalanuvchi bot
+    # "osilib qolganmi yoki ishlayaptimi" bilmay qolmasligi uchun. Ish
+    # tugagach (natija qanday bo'lishidan qat'iy nazar) shu xabar o'chiriladi.
+    status_message = await update.message.reply_text("⏳ Bajaryapman...")
+
+    async def _clear_status():
+        try:
+            await context.bot.delete_message(chat_id=chat_id, message_id=status_message.message_id)
+        except Exception:
+            pass  # xabar allaqachon o'chirilgan/topilmasa muammo emas
+
     # Avval: bu erkin xabar haqiqiy amaliy buyruqmi (masalan "yangi target yoq",
     # "X reklamani to'xtat", "abtest boshla")? Bo'lsa — to'liq Targetolog ->
     # Marketolog -> ijro zanjiri avtomatik ishga tushadi, hisobga real o'zgarish
@@ -133,6 +149,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # bo'lsa ham, bot xuddi hammasi joyidek maslahat berib qo'yadi va bu
         # aslida hech narsa qilinmaganini yashirib qo'yadi. Xatoni ochiq aytamiz.
         logger.exception("handle_chat_command xatosi")
+        await _clear_status()
         await update.message.reply_text(
             f"⚠️ Buyruqni bajarishda kutilmagan xatolik yuz berdi: {e}\n\n"
             "Qaytadan urinib ko'ring yoki aniqroq yozing."
@@ -144,6 +161,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         history.append({"role": "user", "content": user_text})
         history.append({"role": "assistant", "content": command_result})
         history[:] = history[-MAX_HISTORY_MESSAGES:]
+        await _clear_status()
         for i in range(0, len(command_result), 4000):
             # parse_mode ishlatilmaydi — sabab yuqoridagi izohda
             await update.message.reply_text(command_result[i:i + 4000])
@@ -157,7 +175,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         response = client.messages.create(
             model=MODEL,
             max_tokens=1500,
-            system=KNOWLEDGE_BASE,
+            # cache_control — bilim bazasi (KNOWLEDGE_BASE) har xabarda bir xil
+            # bo'lgani uchun keshlanadi, xarajatni sezilarli kamaytiradi.
+            system=[{"type": "text", "text": KNOWLEDGE_BASE, "cache_control": {"type": "ephemeral"}}],
             messages=history,
         )
         answer = response.content[0].text
@@ -165,6 +185,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.exception("Claude API xatosi")
         answer = f"⚠️ Xatolik yuz berdi: {e}"
 
+    await _clear_status()
     history.append({"role": "assistant", "content": answer})
 
     for i in range(0, len(answer), 4000):

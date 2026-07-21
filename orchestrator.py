@@ -362,15 +362,19 @@ def _run_pipeline_command(user_text: str, history_text: str) -> str:
         "Foydalanuvchi Telegram orqali quyidagi amaliy buyruqni berdi (kerak bo'lsa "
         f"suhbat konteksti bilan birga):{history_text}\n\n"
         f"Yangi xabar: \"{user_text}\"\n\n"
-        "Joriy hisobdagi kampaniya/adset/ad nomlari, ID'lari va joriy targeting "
-        f"sozlamalari (adset.targeting maydonida):\n{structure_json}\n\n"
+        "Joriy hisobdagi kampaniya/adset/ad nomlari va ID'lari (targeting "
+        f"tafsilotlarisiz — kerak bo'lsa alohida so'rang):\n{structure_json}\n\n"
         "Agar buyruqda hudud/shahar/tuman nomi (masalan \"Chirchiq\", \"Zangiota\") "
         "qo'shish yoki chiqarib tashlash (exclude) kerak bo'lsa-yu, lekin sizda "
         "ularning Meta rasmiy geo-target kaliti (key) yo'q bo'lsa — `no_action` "
         "qaytarib, `actions[0].params.geo_lookup_needed` ro'yxatida shu joy "
-        "nomlarini bering (masalan [\"Chirchiq\", \"Zangiota\"]) — bu ro'yxat "
-        "berilsa, sizga ularning haqiqiy kalitlari alohida yuboriladi va qayta "
-        "so'ralasiz.\n"
+        "nomlarini bering.\n"
+        "Agar `adjust_audience` uchun biror adset'ning JORIY to'liq targeting'ini "
+        "bilish kerak bo'lsa — `no_action` qaytarib, `actions[0].params."
+        "adset_details_needed` ro'yxatida o'sha adset'ning (account_structure'dan "
+        "topilgan) ID'sini bering.\n"
+        "Ikkalasini ham bir vaqtda so'rashingiz mumkin — sizga natijalar birga "
+        "qaytariladi va qayta so'ralasiz.\n"
         "Agar buyruqdagi nomga mos kampaniya/adset topilmasa YOKI yangi targeting "
         "uchun ma'lumot (soha, maqsad, byudjet, hudud) yetarli bo'lmasa — `no_action` "
         "qaytarib aniq nima yetishmayotganini `summary`da so'rang. Aks holda to'liq "
@@ -382,29 +386,49 @@ def _run_pipeline_command(user_text: str, history_text: str) -> str:
     except TargetologFormatError as e:
         return _format_json_error(e, "Targetolog")
 
-    # Ikkinchi bosqich: agar Targetolog hudud nomlarining Meta kalitini so'ragan
-    # bo'lsa, ularni haqiqatan Meta'dan qidirib topamiz va qayta so'raymiz.
+    # Ikkinchi bosqich: agar Targetolog hudud kaliti va/yoki adset'ning to'liq
+    # targeting'ini so'ragan bo'lsa, ularni haqiqatan Meta'dan olib, qayta so'raymiz.
     first_action = (targetolog_plan.get("actions") or [{}])[0]
-    geo_lookup_needed = (first_action.get("params") or {}).get("geo_lookup_needed")
-    if first_action.get("type") == "no_action" and geo_lookup_needed:
-        geo_candidates = {}
-        for place in geo_lookup_needed:
-            try:
-                geo_candidates[place] = meta_api.search_geo_location(place)
-            except meta_api.MetaAPIError as e:
-                geo_candidates[place] = {"error": str(e)}
+    params = first_action.get("params") or {}
+    geo_lookup_needed = params.get("geo_lookup_needed")
+    adset_details_needed = params.get("adset_details_needed")
+
+    if first_action.get("type") == "no_action" and (geo_lookup_needed or adset_details_needed):
+        extra_parts = []
+
+        if geo_lookup_needed:
+            geo_candidates = {}
+            for place in geo_lookup_needed:
+                try:
+                    geo_candidates[place] = meta_api.search_geo_location(place)
+                except meta_api.MetaAPIError as e:
+                    geo_candidates[place] = {"error": str(e)}
+            extra_parts.append(
+                "Hudud nomlari uchun Meta'dan topilgan rasmiy geo-target "
+                f"nomzodlari:\n{json.dumps(geo_candidates, ensure_ascii=False, indent=2)}"
+            )
+
+        if adset_details_needed:
+            adset_details = {}
+            for adset_id in adset_details_needed:
+                try:
+                    adset_details[adset_id] = meta_api.get_adset_details(adset_id)
+                except meta_api.MetaAPIError as e:
+                    adset_details[adset_id] = {"error": str(e)}
+            extra_parts.append(
+                "So'ralgan adset(lar)ning to'liq joriy sozlamalari:\n"
+                f"{json.dumps(adset_details, ensure_ascii=False, indent=2)}"
+            )
 
         followup_message = (
-            message + "\n\n---\n\nSiz so'ragan hudud nomlari uchun Meta'dan "
-            "topilgan rasmiy geo-target nomzodlari (har biri uchun eng mos "
-            f"variantni tanlang):\n{json.dumps(geo_candidates, ensure_ascii=False, indent=2)}\n\n"
-            "Endi shu kalitlar bilan to'liq action_plan tuzing. Agar biror joy "
-            "uchun mos nomzod topilmasa, `no_action` qaytarib buni ochiq ayting."
+            message + "\n\n---\n\n" + "\n\n".join(extra_parts) + "\n\n"
+            "Endi shu ma'lumotlar bilan to'liq action_plan tuzing. Agar hali ham "
+            "biror narsa yetishmasa, `no_action` qaytarib buni ochiq ayting."
         )
         try:
             targetolog_plan = _call_agent(TARGETOLOG_SYSTEM, followup_message)
         except TargetologFormatError as e:
-            return _format_json_error(e, "Targetolog (geo-lookup)")
+            return _format_json_error(e, "Targetolog (aniqlashtirish)")
 
     return _finish_pipeline(targetolog_plan, dry_run=False)
 

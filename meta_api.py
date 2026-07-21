@@ -135,23 +135,44 @@ def get_active_ads(adset_id: str | None = None) -> list[dict]:
     return data.get("data", [])
 
 
-def get_account_structure() -> dict:
-    """Kampaniya -> Adset -> Ad daraxtini NOM va ID bilan birga qaytaradi.
+def get_account_structure(active_only: bool = True) -> dict:
+    """Kampaniya -> Adset -> Ad daraxtini FAQAT NOM va ID bilan qaytaradi (yengil).
 
     Bu funksiya juda muhim: foydalanuvchi Telegramda "AB | Traffic | IG" kabi
     o'ziga tanish NOM bilan buyruq beradi (hech kim Meta ID'ni yodlab yurmaydi).
     Targetolog action yaratishdan oldin shu ro'yxatdan mos nomni topib, haqiqiy
-    `id`ni ishlatishi kerak — aks holda action bajarilmaydi."""
-    campaigns = _get(f"{AD_ACCOUNT_ID}/campaigns", {
-        "fields": "id,name,status,objective", "limit": 200,
-    }).get("data", [])
-    adsets = _get(f"{AD_ACCOUNT_ID}/adsets", {
-        "fields": "id,name,status,campaign_id,daily_budget,targeting", "limit": 200,
-    }).get("data", [])
-    ads = _get(f"{AD_ACCOUNT_ID}/ads", {
-        "fields": "id,name,status,adset_id,campaign_id", "limit": 200,
-    }).get("data", [])
+    `id`ni ishlatishi kerak — aks holda action bajarilmaydi.
+
+    MUHIM: bu yerda ataylab `targeting` maydoni SO'RALMAYDI — ko'p sonli
+    kampaniya/adset bo'lgan hisoblarda to'liq targeting'larni qo'shib yuborish
+    Claude'ning kontekst limitidan (200k token) oshib ketishiga sabab bo'lgan.
+    Bitta adset'ning to'liq targeting'i kerak bo'lsa, `get_adset_details()`ni
+    faqat O'SHA BITTA adset uchun alohida chaqiring.
+
+    `active_only=True` bo'lsa, arxivlangan/o'chirilgan (ARCHIVED/DELETED)
+    obyektlar chiqarib tashlanadi — bu ham hajmni sezilarli kamaytiradi."""
+    status_filter = {"effective_status": ["ACTIVE", "PAUSED"]} if active_only else None
+
+    campaign_params = {"fields": "id,name,status,objective", "limit": 100}
+    adset_params = {"fields": "id,name,status,campaign_id", "limit": 200}
+    ad_params = {"fields": "id,name,status,adset_id,campaign_id", "limit": 200}
+    if status_filter:
+        campaign_params["filtering"] = [{"field": "effective_status", "operator": "IN", "value": status_filter["effective_status"]}]
+        adset_params["filtering"] = campaign_params["filtering"]
+        ad_params["filtering"] = campaign_params["filtering"]
+
+    campaigns = _get(f"{AD_ACCOUNT_ID}/campaigns", campaign_params).get("data", [])
+    adsets = _get(f"{AD_ACCOUNT_ID}/adsets", adset_params).get("data", [])
+    ads = _get(f"{AD_ACCOUNT_ID}/ads", ad_params).get("data", [])
     return {"campaigns": campaigns, "adsets": adsets, "ads": ads}
+
+
+def get_adset_details(adset_id: str) -> dict:
+    """Bitta adset'ning to'liq sozlamalarini (targeting, byudjet va h.k.) qaytaradi.
+    Targetolog `account_structure`dan kerakli adset'ni nom bo'yicha topgach, aynan
+    o'sha bitta adset uchun bu funksiya chaqiriladi — barcha adsetlarning
+    targeting'ini birdaniga yubormaslik uchun (token limitidan oshib ketmasligi uchun)."""
+    return _get(adset_id, {"fields": "id,name,status,campaign_id,daily_budget,targeting,optimization_goal"})
 
 
 # ---------------------------------------------------------------------------

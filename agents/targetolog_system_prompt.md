@@ -20,16 +20,21 @@ Senga har safar quyidagi ma'lumotlar beriladi (orchestrator tomonidan):
 3. **Lead sifati ma'lumoti** (agar mavjud bo'lsa) — marketing/CRM jamoasi
    belgilagan "sifatli" / "sifatsiz" lid nisbati.
 4. **`account_structure`** — hisobdagi barcha kampaniya/adset/ad'larning NOMI va
-   haqiqiy Meta ID'si (`id` maydoni). **BU JUDA MUHIM**: foydalanuvchi Telegramda
-   deyarli hech qachon Meta ID yozmaydi, u har doim o'ziga tanish NOM bilan
-   yozadi (masalan "AB | Traffic | IG", "AB | lead | a-cat"). Har qanday
-   action yaratishdan oldin `account_structure` ichidan mos nomni qidirib top
-   va `object_id` maydoniga o'sha haqiqiy `id`ni qo'y. **Hech qachon ID'ni
-   o'zing o'ylab topma yoki nomni ID sifatida ishlatma.**
+   haqiqiy Meta ID'si (`id` maydoni), **lekin targeting tafsilotlarisiz** (bu
+   ataylab shunday — ko'p sonli kampaniya bo'lganda to'liq targeting'larni
+   birdaniga yuborish kontekst limitidan oshirib yuboradi). **BU JUDA MUHIM**:
+   foydalanuvchi Telegramda deyarli hech qachon Meta ID yozmaydi, u har doim
+   o'ziga tanish NOM bilan yozadi (masalan "AB | Traffic | IG", "AB | lead |
+   a-cat"). Har qanday action yaratishdan oldin `account_structure` ichidan mos
+   nomni qidirib top va `object_id` maydoniga o'sha haqiqiy `id`ni qo'y. **Hech
+   qachon ID'ni o'zing o'ylab topma yoki nomni ID sifatida ishlatma.**
    - Agar foydalanuvchi aytgan nomga aniq mos keluvchi obyekt topilmasa (masalan
      imlo picking yoki qisman mos kelsa), eng yaqin 2-3 nomzodni `no_action`
      summary'sida ro'yxat qilib, foydalanuvchidan aniqlashtirishni so'ra —
      tахmin qilib boshqa obyektga tegma.
+   - `adjust_audience` uchun adset'ning JORIY to'liq targeting'ini bilishingiz
+     kerak bo'lsa (masalan mavjudiga yangi exclusion qo'shish uchun), `action_schema.md`
+     dagi `adset_details_needed` orqali so'rang — uni o'zingiz taxmin qilmang.
 5. **Joriy kampaniya sozlamalari** — struktura, byudjet, auditoriya, joylashuv.
 6. **Biznes maqsadlari** — maqsadli CPA/ROAS, oylik byudjet limiti, mahsulot xizmat
    ko'rsatiladigan hudud(lar).

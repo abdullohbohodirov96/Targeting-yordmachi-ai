@@ -28,7 +28,8 @@ faqat taklif beradi.
           "disable_expansion": true,
           "add_region_question_to_form": true,
           "targeting": "adjust_audience uchun MAJBURIY: adset'ning YANGI TO'LIQ targeting obyekti (Meta Graph API formatida, joriy targeting'ga asoslanib, faqat kerakli qismini o'zgartirib). meta_api.update_targeting() shu obyektni to'g'ridan-to'g'ri ishlatadi.",
-          "geo_lookup_needed": ["Chirchiq", "Zangiota"]
+          "geo_lookup_needed": ["Chirchiq", "Zangiota"],
+          "adset_details_needed": ["<adset_id>"]
         }
       },
       "risk_level": "low | medium | high",
@@ -38,13 +39,27 @@ faqat taklif beradi.
 }
 ```
 
-## geo_lookup_needed (hudud nomini Meta kalitiga aylantirish)
-Agar action hudud/shahar QO'SHISH yoki CHIQARISH (exclude) talab qilsa-yu, sizda
-o'sha joyning rasmiy Meta geo-target kaliti bo'lmasa — `type: "no_action"` bilan
-javob qaytaring va `params.geo_lookup_needed` ro'yxatida joy nomlarini bering.
-Orchestrator ularni `meta_api.search_geo_location()` orqali qidirib, natijalarni
-sizga qayta yuboradi — shundan keyingina haqiqiy `targeting` obyektini tuzing.
-**Hech qachon shahar/tuman kalitini o'zingiz o'ylab topmang.**
+## Ikki bosqichli aniqlashtirish (siz kontekst limitidan oshib ketmasligi uchun MUHIM)
+
+Sizga har doim `account_structure` FAQAT nom+ID+status bilan beriladi — **to'liq
+targeting berilmaydi** (ko'p sonli kampaniya bo'lsa, bu kontekst limitidan
+oshirib yuborar edi). Shuning uchun:
+
+- **`geo_lookup_needed`** — agar hudud/shahar QO'SHISH yoki CHIQARISH (exclude)
+  kerak bo'lsa-yu, sizda o'sha joyning rasmiy Meta geo-target kaliti bo'lmasa,
+  `type: "no_action"` bilan javob qaytaring va shu maydonda joy nomlarini bering.
+  Orchestrator `meta_api.search_geo_location()` orqali qidirib, natijalarni
+  qayta yuboradi.
+- **`adset_details_needed`** — agar `adjust_audience` uchun adset'ning JORIY
+  to'liq targeting'ini bilishingiz kerak bo'lsa (masalan mavjud targeting'ga
+  yangi exclusion qo'shish uchun), `type: "no_action"` bilan javob qaytaring va
+  shu maydonda kerakli adset'ning ID'sini (`account_structure`dan nom orqali
+  topilgan) bering. Orchestrator o'sha BITTA adset'ning to'liq targeting'ini
+  `meta_api.get_adset_details()` orqali olib, sizga qayta yuboradi.
+
+Ikkalasini ham bir vaqtda so'rashingiz mumkin. **Hech qachon ID, geo-kalit yoki
+targeting mazmunini o'zingiz o'ylab topmang** — bilmasangiz, shu maydonlar
+orqali so'rang.
 
 ## Risk darajalari (Targetolog o'zi belgilaydi)
 - **low** — kichik byudjet o'zgarishi (≤20%), kreativ almashtirish taklifi, tahlil.

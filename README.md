@@ -46,6 +46,12 @@ etiladi (ikkinchi nazorat qatlami). Agar tezlik muhimroq bo'lsa,
 o'tkazib yuborish mumkin — shunda Targetolog taklif qilgan HAMMA action
 to'g'ridan-to'g'ri ijro etiladi. Xavfsizlikni qaytarish uchun `false` qiling.
 
+**Xarajatni balanslash (model tanlash):** har bir so'rovga qimmat model
+ishlatilmaydi. Sonnet (`MODEL`) faqat HAQIQIY qaror/vazifa yaratilganda
+(Targetolog action_plan, Marketolog tekshiruvi) ishlatiladi. Oddiy narsalar —
+intent aniqlash, metrika savoliga real raqam bilan javob berish, byudjet
+deposit/savoli, erkin suhbat — arzon `LIGHT_MODEL` (Haiku) orqali bajariladi.
+
 Har bir ijro natijasi (muvaffaqiyatli/xato) Telegram hisobotida aniq ko'rsatiladi
 — agar Meta biror action'ni rad etsa (masalan "audience invalid"), bu Telegramda
 ❌ belgisi bilan haqiqiy xato matni bilan ko'rinadi, hech qachon yashirilmaydi.
@@ -67,6 +73,19 @@ Har bir ijro natijasi (muvaffaqiyatli/xato) Telegram hisobotida aniq ko'rsatilad
   15 soniyani ko'rgan (thruplay)", "CPA qancha bo'ldi" kabi savollarga Meta
   API'dan real raqamlarni tortib, aniq javob beradi (o'ylab topmaydi).
 - ✅ Har bir amal uchun to'liq log (`logs/run_*.json`)
+- ✅ **Byudjet balansi kuzatuvi** — "bugun 500$ tushdi" desangiz, `budget_tracker.py`
+  balansni yozib oladi va REAL kunlik xarajat sur'ati (Meta API'dan) asosida
+  necha kunga/qachon tugashini hisoblab beradi. Balans $100 (sozlanadigan,
+  `budget_state.json` -> `alert_threshold_usd`) chegarasidan pastga tushsa,
+  bot so'ramasangiz ham o'zi birinchi bo'lib Telegram'ga xabar yuboradi.
+- ✅ **Kunlik avtomatik tahlil** — botni ishga tushirgandan keyin, har 24
+  soatda `run_analysis_cycle()` o'zi ishga tushadi (Targetolog to'liq hisobni
+  ko'rib chiqadi, kerak bo'lsa pause/resume/byudjet/`archive_campaign` kabi
+  action'larni to'g'ridan-to'g'ri ijro etadi) va natijani Telegram'ga yuboradi
+  — botni "review va publish qilib yurishi" shu orqali ishlaydi.
+- ✅ **`archive_campaign`** — uzoq vaqt pauzada, kerak bo'lmagan kampaniyalarni
+  arxivlaydi (o'chirish emas, Ads Manager'da qaytarib bo'ladi) — "keraksiz"larni
+  tozalash uchun.
 
 ### Telegram'da qanday ishlatiladi (erkin matn orqali)
 
@@ -98,8 +117,10 @@ inson nazoratida qoldirilgan.
 ## O'rnatish
 
 ```bash
-pip install python-telegram-bot anthropic requests
+pip install "python-telegram-bot[job-queue]" anthropic requests
 ```
+
+(`[job-queue]` MUHIM — kunlik avtomatik tahlil va byudjet ogohlantirishi shunga tayanadi.)
 
 ### Kerakli ENV o'zgaruvchilar
 

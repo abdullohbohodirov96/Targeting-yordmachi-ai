@@ -118,6 +118,34 @@ def get_insights(
     return data.get("data", [])
 
 
+def get_account_spend(since: str, until: str) -> float:
+    """Berilgan sana oralig'ida (YYYY-MM-DD, ikkalasi ham kiritiladi) butun
+    hisobning (barcha kampaniyalar) umumiy xarajatini qaytaradi. Byudjet
+    balansini kuzatish (budget_tracker.py) uchun ishlatiladi."""
+    params = {
+        "level": "account",
+        "time_range": {"since": since, "until": until},  # _get avtomatik JSON'ga o'giradi
+        "fields": "spend",
+    }
+    data = _get(f"{AD_ACCOUNT_ID}/insights", params)
+    rows = data.get("data", [])
+    return sum(float(r.get("spend", 0)) for r in rows)
+
+
+def get_account_daily_spend_avg(days: int = 3) -> float:
+    """So'nggi N kunlik o'rtacha KUNLIK xarajatni qaytaradi (byudjet necha
+    kunga/qachon tugashini hisoblash uchun burn-rate)."""
+    params = {
+        "level": "account",
+        "date_preset": f"last_{days}d",
+        "fields": "spend",
+    }
+    data = _get(f"{AD_ACCOUNT_ID}/insights", params)
+    rows = data.get("data", [])
+    total = sum(float(r.get("spend", 0)) for r in rows)
+    return total / days if days > 0 else 0.0
+
+
 def get_full_report(
     level: str = "ad",
     date_preset: str = "last_7d",
@@ -187,14 +215,28 @@ def get_adset_details(adset_id: str) -> dict:
 # ON/OFF VA BYUDJET BOSHQARUVI
 # ---------------------------------------------------------------------------
 
+def set_status(object_id: str, status: str) -> dict:
+    """Ad/AdSet/Campaign holatini o'rnatadi (ACTIVE / PAUSED / ARCHIVED).
+    pause_object/activate_object shu funksiyaning qulay wrapperlari."""
+    return _post(object_id, {"status": status})
+
+
 def pause_object(object_id: str) -> dict:
     """Ad, AdSet yoki Campaign'ni pauza qiladi."""
-    return _post(object_id, {"status": "PAUSED"})
+    return set_status(object_id, "PAUSED")
 
 
 def activate_object(object_id: str) -> dict:
     """Ad, AdSet yoki Campaign'ni qayta ishga tushiradi."""
-    return _post(object_id, {"status": "ACTIVE"})
+    return set_status(object_id, "ACTIVE")
+
+
+def archive_object(object_id: str) -> dict:
+    """Kerak bo'lmay qolgan (uzoq vaqt pauzada, kelajakda ishlatilmaydigan)
+    kampaniya/adset'ni arxivlaydi — o'chirib tashlash (DELETED) emas, shuning
+    uchun kerak bo'lsa Ads Manager'da qaytarib bo'ladi, lekin ro'yxatlarni
+    "toza" qiladi."""
+    return set_status(object_id, "ARCHIVED")
 
 
 def update_daily_budget(adset_id: str, new_daily_budget_cents: int) -> dict:

@@ -27,6 +27,7 @@ from datetime import datetime
 import anthropic
 
 import meta_api
+import budget_tracker
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orchestrator")
@@ -45,17 +46,26 @@ BUSINESS_RULES = json.loads((BASE_DIR / "business_rules.json").read_text(encodin
 TARGETOLOG_SYSTEM = f"{TARGETOLOG_ROLE}\n\n---\n\n# BILIM BAZASI\n\n{KNOWLEDGE_BASE}\n\n---\n\n{ACTION_SCHEMA}"
 MARKETOLOG_SYSTEM = f"{MARKETOLOG_ROLE}\n\n---\n\n{ACTION_SCHEMA}"
 
+# MODEL TANLASH STRATEGIYASI (xarajatni balanslash uchun):
+#   - MODEL (Sonnet) — faqat HAQIQIY vazifa/qaror yaratish uchun: Targetolog
+#     action_plan tuzganda (yangi kampaniya, byudjet/auditoriya o'zgarishi,
+#     murakkab tashxis) va Marketolog tekshiruvida. Bu joylarda chuqur
+#     mulohaza va bilim bazasiga tayanish kerak — arzon model xato qiladi.
+#   - LIGHT_MODEL (Haiku) — intent aniqlash, oddiy metrika savoliga real
+#     raqamlar bilan javob berish (`answer_data_question`), byudjet
+#     deposit/savolini tushunish, va oddiy erkin suhbat (bilim bazasidan
+#     maslahat, hisobga tegmaydigan). Bular "vazifa yaratish" emas, faqat
+#     o'qish/tushuntirish — Haiku yetarli va bir necha barobar arzon.
 MODEL = "claude-sonnet-4-5"
-# Intent-check (ACTION/METRIC/GENERAL aniqlash) har bir Telegram xabarida ishlaydi
-# va bilim bazasidan foydalanmaydi — shuning uchun arzon/tez model yetarli.
-# Agar bu model xatolik bersa, INTENT_MODEL'ni yana MODEL'ga o'zgartiring.
-INTENT_MODEL = "claude-haiku-4-5-20251001"
+LIGHT_MODEL = "claude-haiku-4-5-20251001"
+INTENT_MODEL = LIGHT_MODEL  # eski nom — moslik uchun saqlangan
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 # Har bir action_plan tipi -> uni haqiqiy hisobda bajaradigan funksiya
 ACTION_EXECUTORS = {
     "pause_ad": lambda a: _execute_and_verify_status(a["object_id"], "PAUSED"),
     "resume_ad": lambda a: _execute_and_verify_status(a["object_id"], "ACTIVE"),
+    "archive_campaign": lambda a: _execute_and_verify_status(a["object_id"], "ARCHIVED"),
     "increase_budget": lambda a: meta_api.adjust_budget_by_percent(
         a["object_id"], a["params"]["current_daily_budget_cents"], abs(a["params"]["percent"])
     ),
@@ -83,10 +93,7 @@ def _execute_and_verify_status(object_id: str, expected_status: str) -> dict:
     {"success": true} qaytaradi-yu, holat aslida o'zgarmagan bo'lishi mumkin
     (masalan yuqori darajadagi adset/kampaniya o'chiq bo'lsa) — bu holda
     "bajarildi" deb yolg'on hisobot berilmasligi uchun xato ko'taramiz."""
-    if expected_status == "PAUSED":
-        meta_api.pause_object(object_id)
-    else:
-        meta_api.activate_object(object_id)
+    meta_api.set_status(object_id, expected_status)
 
     info = meta_api.get_object_status(object_id)
     actual_status = info.get("status")
@@ -473,7 +480,51 @@ def run_analysis_cycle(dry_run: bool = False) -> str:
     )
 
 
-def handle_chat_command(user_text: str, recent_history: list[dict] | None = None) -> str | None:
+def handle_budget_message(user_text: str, chat_id: int) -> str:
+    """Foydalanuvchi byudjet/pul haqida yozganda chaqiriladi (masalan 'bugun
+    500$ tushdi', 'qancha qoldi', 'qachon tugaydi'). Arzon model (LIGHT_MODEL)
+    bilan bu deposit xabarimi yoki savolmi va agar deposit bo'lsa qancha
+    summa ekanini aniqlaydi, keyin haqiqiy hisob-kitobni `budget_tracker.py`
+    (Meta'dan olingan REAL xarajat asosida) bajaradi — model o'zi raqam
+    o'ylab topmaydi, faqat matnni tushunadi."""
+    extraction = client.messages.create(
+        model=LIGHT_MODEL,
+        max_tokens=60,
+        system=(
+            "Foydalanuvchi reklama byudjeti/puli haqida yozmoqda. Faqat JSON "
+            'qaytar: {"type": "deposit" yoki "query", "amount": <deposit bo\'lsa '
+            "dollar miqdori (raqam), aks holda null>}. Masalan: "
+            "'bugun 500$ tushdi' -> {\"type\":\"deposit\",\"amount\":500}. "
+            "'gruppaga 200 dollar tashladim' -> {\"type\":\"deposit\",\"amount\":200}. "
+            "'qancha qoldi', 'qachon tugaydi', '$100 qolganda ayt' -> "
+            '{"type":"query","amount":null}. Faqat JSON qaytar, boshqa matn yo\'q.'
+        ),
+        messages=[{"role": "user", "content": user_text}],
+    )
+    text = extraction.content[0].text.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = {"type": "query", "amount": None}
+
+    if parsed.get("type") == "deposit" and parsed.get("amount"):
+        amount = float(parsed["amount"])
+        status = budget_tracker.record_deposit(amount, chat_id)
+        header = f"✅ ${amount:.0f} balansga qo'shildi.\n\n"
+        return header + budget_tracker.format_status_message(status)
+
+    budget_tracker.set_notify_chat_id(chat_id)
+    status = budget_tracker.get_status()
+    return budget_tracker.format_status_message(status)
+
+
+def handle_chat_command(
+    user_text: str, recent_history: list[dict] | None = None, chat_id: int | None = None
+) -> str | None:
     """Foydalanuvchi Telegram'da erkin matn yozganda chaqiriladi. Avval bu matn
     haqiqiy amaliy buyruqmi (masalan 'yangi target yoq', 'X reklamani to'xtat',
     'abtest boshla') yoki oddiy savolmi — shuni aniqlaydi.
@@ -499,6 +550,12 @@ def handle_chat_command(user_text: str, recent_history: list[dict] | None = None
         max_tokens=20,
         system=(
             "Foydalanuvchi xabari qaysi turga kiradi? Faqat bitta so'z bilan javob ber:\n"
+            "BUDGET — agar reklama HISOB BALANSI/PULI haqida bo'lsa: hisobga pul "
+            "tushirilgani haqida xabar (masalan 'bugun 500$ tushdi', 'gruppaga 200 "
+            "dollar tashladim'), yoki shu pul qancha qolgani/qачон tugashi haqidagi "
+            "savol (masalan 'qancha qoldi', 'necha kunga yetadi', 'qachon tugaydi', "
+            "'100$ qolganda ayt'). Bu ADS ACCOUNT balansi haqida, aniq bitta ad'ning "
+            "CPA/CTR kabi ijro ko'rsatkichi haqida EMAS (u METRIC).\n"
             "ANALYSIS — agar foydalanuvchi BUTUN hisobni yoki bir nechta kampaniyani "
             "KENG QAMROVLI tahlil qilishni so'rasa (masalan: 'hisobimni tahlil qil', "
             "'targetni to'liq tekshir', 'nima muammo bor', 'umumiy holatni ko'rsat') — "
@@ -520,6 +577,8 @@ def handle_chat_command(user_text: str, recent_history: list[dict] | None = None
     )
     verdict = intent_check.content[0].text.strip().upper()
 
+    if "BUDGET" in verdict:
+        return handle_budget_message(user_text, chat_id) if chat_id is not None else None
     if "ANALYSIS" in verdict:
         return run_analysis_cycle(dry_run=False)
     if "ACTION" in verdict:
@@ -657,7 +716,10 @@ def answer_data_question(user_text: str, history_text: str = "") -> str:
         "nomlari bo'yicha alohida ko'rsat."
     )
     response = client.messages.create(
-        model=MODEL,
+        # MUHIM: bu yerda faqat berilgan raqamlarni o'qib, oddiy tilda
+        # qaytarish kerak — real qaror/action_plan yaratilmaydi. Shuning
+        # uchun qimmat Sonnet emas, arzon LIGHT_MODEL (Haiku) yetarli.
+        model=LIGHT_MODEL,
         max_tokens=800,  # xarajatni cheklash uchun kamaytirildi
         # cache_control — xuddi _call_agent'dagi kabi, statik qismini keshlab
         # xarajatni kamaytiradi.

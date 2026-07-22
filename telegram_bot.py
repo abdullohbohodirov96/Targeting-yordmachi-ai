@@ -8,7 +8,10 @@ Ikki rejimda ishlaydi:
      tushiradi (/analyze, /pause, /resume, /status).
 
 O'RNATISH:
-    pip install python-telegram-bot anthropic requests
+    pip install "python-telegram-bot[job-queue]" anthropic requests
+    (MUHIM: [job-queue] qismi shart — kunlik avtomatik tahlil va byudjet
+    ogohlantirishi shunga tayanadi, bo'lmasa bot ishga tushadi lekin bu
+    ikkalasi ishlamay, faqat ogohlantiruvchi log yozadi.)
 
 KERAKLI ENV O'ZGARUVCHILAR:
     TELEGRAM_BOT_TOKEN
@@ -30,6 +33,7 @@ import anthropic
 
 import meta_api
 import orchestrator
+import budget_tracker
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("target-master-bot")
@@ -37,7 +41,10 @@ logger = logging.getLogger("target-master-bot")
 BASE_DIR = Path(__file__).parent
 KNOWLEDGE_BASE = (BASE_DIR / "target_master_agent.md").read_text(encoding="utf-8")
 
-MODEL = "claude-sonnet-4-5"
+# Oddiy erkin suhbat (hisobga tegmaydigan, faqat bilim bazasidan maslahat)
+# uchun arzon model yetarli — real qaror/vazifa yaratilmaydigan joylarda
+# doim Sonnet emas, Haiku ishlatiladi (xarajatni balanslash).
+MODEL = orchestrator.LIGHT_MODEL
 MAX_HISTORY_MESSAGES = 10  # xarajatni kamaytirish uchun kamaytirildi (avval 20)
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
@@ -48,6 +55,9 @@ last_report: str = "Hali tahlil ishga tushirilmagan. /analyze buyrug'ini yuborin
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conversations[update.effective_chat.id] = []
+    # Kunlik avtomatik tahlil va byudjet ogohlantirishlari shu chatga
+    # yuborilishi uchun saqlab qo'yamiz (deposit hali yozilmagan bo'lsa ham).
+    budget_tracker.set_notify_chat_id(update.effective_chat.id)
     await update.message.reply_text(
         "👋 Salom! Men — Target Master.\n\n"
         "💬 Savol bering — Meta Ads bo'yicha maslahat beraman.\n"
@@ -56,6 +66,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⏸ /pause <ad_id> — reklamani to'xtatish\n"
         "▶️ /resume <ad_id> — reklamani qayta ishga tushirish\n"
         "📋 /status — oxirgi tahlil hisobotini ko'rish\n"
+        "💰 \"bugun 500$ tushdi\" / \"qancha qoldi?\" — byudjet balansini kuzataman, "
+        "chegaradan pastga tushsa o'zim xabar beraman.\n"
+        "🔁 Har kuni avtomatik tahlil qilib, kerak bo'lmagan narsalarni o'zim "
+        "tuzataman/arxivlayman.\n"
         "🔄 /reset — suhbat tarixini tozalash"
     )
 
@@ -124,6 +138,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     history = conversations.setdefault(chat_id, [])
 
+    # Kunlik avtomatik tahlil va byudjet ogohlantirishlari qayerga
+    # yuborilishini har bir xabarda yangilab boramiz.
+    budget_tracker.set_notify_chat_id(chat_id)
+
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
     # Ish jarayonini ko'rsatuvchi vaqtinchalik xabar — foydalanuvchi bot
@@ -142,7 +160,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Marketolog -> ijro zanjiri avtomatik ishga tushadi, hisobga real o'zgarish
     # kiritiladi va natija Telegram'ga qaytadi.
     try:
-        command_result = orchestrator.handle_chat_command(user_text, recent_history=history)
+        command_result = orchestrator.handle_chat_command(
+            user_text, recent_history=history, chat_id=chat_id
+        )
     except Exception as e:
         # MUHIM: bu yerda jim qolib, oddiy maslahat rejimiga "yashirincha"
         # tushib ketmaymiz — aks holda foydalanuvchi buyrug'i bajarilmagan
@@ -192,6 +212,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(answer[i:i + 4000])
 
 
+async def budget_check_job(context: ContextTypes.DEFAULT_TYPE):
+    """JobQueue muntazam chaqiradi (masalan har 4 soatda). Balans
+    ($100 kabi) chegaradan pastga tushsa, foydalanuvchi so'ramasa ham
+    o'zimiz birinchi bo'lib xabar beramiz."""
+    try:
+        alert = budget_tracker.check_and_alert()
+    except Exception:
+        logger.exception("Byudjet tekshiruvida xatolik")
+        return
+    if alert:
+        try:
+            await context.bot.send_message(chat_id=alert["chat_id"], text=alert["message"])
+        except Exception:
+            logger.exception("Byudjet ogohlantirishini yuborishda xatolik")
+
+
+async def daily_analysis_job(context: ContextTypes.DEFAULT_TYPE):
+    """JobQueue kuniga bir marta chaqiradi — hisobni to'liq tahlil qilib
+    (Targetolog + kerak bo'lsa avtomatik ijro), natijani foydalanuvchiga
+    o'zi yuboradi. Shu orqali bot doim "review va publish qilib yuradi"."""
+    global last_report
+    chat_id = budget_tracker.get_notify_chat_id()
+    if chat_id is None:
+        return
+    try:
+        last_report = orchestrator.run_analysis_cycle(dry_run=False)
+    except Exception:
+        logger.exception("Kunlik avtomatik tahlil xatosi")
+        return
+    try:
+        text = "🔁 Kunlik avtomatik tahlil:\n\n" + last_report
+        for i in range(0, len(text), 4000):
+            await context.bot.send_message(chat_id=chat_id, text=text[i:i + 4000])
+    except Exception:
+        logger.exception("Kunlik tahlil hisobotini yuborishda xatolik")
+
+
 def main():
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     app = ApplicationBuilder().token(token).build()
@@ -203,6 +260,18 @@ def main():
     app.add_handler(CommandHandler("pause", pause_ad))
     app.add_handler(CommandHandler("resume", resume_ad))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
+    # Byudjet ogohlantirishi va kunlik avtomatik tahlil uchun fon vazifalari.
+    # MUHIM: bular ishlashi uchun `python-telegram-bot[job-queue]` kerak
+    # (oddiy `python-telegram-bot` yetarli emas — pastdagi eslatmaga qarang).
+    if app.job_queue:
+        app.job_queue.run_repeating(budget_check_job, interval=4 * 3600, first=120)
+        app.job_queue.run_repeating(daily_analysis_job, interval=24 * 3600, first=300)
+    else:
+        logger.warning(
+            "job_queue mavjud emas — 'pip install \"python-telegram-bot[job-queue]\"' "
+            "o'rnating, aks holda avtomatik byudjet ogohlantirishi va kunlik tahlil ishlamaydi."
+        )
 
     logger.info("Target Master bot ishga tushdi...")
     app.run_polling()

@@ -10,7 +10,7 @@ faqat taklif beradi.
   "summary": "Inson o'qiydigan qisqa xulosa (Telegramga yuboriladi)",
   "actions": [
     {
-      "type": "pause_ad | resume_ad | increase_budget | decrease_budget | replace_creative | adjust_audience | create_instant_form | fix_region_targeting | launch_campaign | start_ab_test | conclude_ab_test | no_action",
+      "type": "pause_ad | resume_ad | archive_campaign | increase_budget | decrease_budget | replace_creative | adjust_audience | create_instant_form | fix_region_targeting | launch_campaign | start_ab_test | conclude_ab_test | no_action",
       "object_id": "Meta obyekt ID (ad_id / adset_id / campaign_id)",
       "object_name": "Inson o'qiydigan nom",
       "reason": "Nima uchun bu taklif berilyapti (raqamlar bilan)",

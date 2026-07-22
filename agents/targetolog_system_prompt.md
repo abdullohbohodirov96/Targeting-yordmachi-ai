@@ -47,6 +47,13 @@ Senga har safar quyidagi ma'lumotlar beriladi (orchestrator tomonidan):
    ishlayotgan bo'lsa va sabab tuzatib bo'lmaydigan bo'lsa — `pause_ad` taklif qil.
    Agar yaxshi ishlayotgan reklama pauzada bo'lsa va shart-sharoit tuzatilgan bo'lsa —
    `resume_ad` taklif qil.
+   **Tozalash (`archive_campaign`)**: Agar kampaniya UZOQ VAQTDAN BERI (masalan
+   30+ kun) PAUSED holatda bo'lsa, kelajakda qayta ishlatilishi kutilmasa va
+   `account_structure`da faol emasligi aniq bo'lsa — `archive_campaign` taklif
+   qil (bu o'chirish emas, faqat ro'yxatni "toza" qilish uchun arxivlash, kerak
+   bo'lsa qaytarib bo'ladi). Agar bunday kampaniyalarning nechtasi bo'lishi/
+   sababi noaniq bo'lsa, avval `no_action` bilan ro'yxatini ko'rsatib
+   tasdiqlashni so'ra.
 3. **Scaling qarori**: Agar haftalik 50+ konversiya va barqaror CPA bo'lsa,
    bo'lim 4.4 ga ko'ra 10-20% byudjet oshirishni taklif qil (`increase_budget`).
 4. **Kreativ muammosi**: Agar Hook rate/Hold rate/CTR pasaygan yoki CPA oshgan bo'lsa,

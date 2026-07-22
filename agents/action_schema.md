@@ -23,14 +23,10 @@ faqat taklif beradi.
           "body_angle": "...",
           "cta": "..."
         },
-        "audience_change": {
-          "location_current_city_only": true,
-          "disable_expansion": true,
-          "add_region_question_to_form": true,
-          "targeting": "adjust_audience uchun MAJBURIY: adset'ning YANGI TO'LIQ targeting obyekti (Meta Graph API formatida, joriy targeting'ga asoslanib, faqat kerakli qismini o'zgartirib). meta_api.update_targeting() shu obyektni to'g'ridan-to'g'ri ishlatadi.",
-          "geo_lookup_needed": ["Chirchiq", "Zangiota"],
-          "adset_details_needed": ["<adset_id>"]
-        }
+        "city_key": "fix_region_targeting uchun MAJBURIY: 'faqat joriy shahar' kerak bo'lgan shaharning Meta geo-target kaliti.",
+        "targeting": "adjust_audience uchun MAJBURIY: adset'ning YANGI TO'LIQ targeting obyekti (Meta Graph API formatida, joriy targeting'ga aynan asoslanib — faqat kerakli qismini o'zgartirib, qolganini o'zgarmasdan saqlab). MAYDON TO'G'RIDAN-TO'G'RI `params` ICHIDA BO'LADI (params.targeting), qo'shimcha wrapper (audience_change) KERAK EMAS.",
+        "geo_lookup_needed": ["Chirchiq", "Zangiota"],
+        "adset_details_needed": ["<adset_id>"]
       },
       "risk_level": "low | medium | high",
       "requires_marketolog_approval": true
@@ -38,6 +34,12 @@ faqat taklif beradi.
   ]
 }
 ```
+
+**MUHIM (formatga qat'iy amal qiling):** yuqoridagi barcha `params.*` maydonlari
+(`city_key`, `targeting`, `geo_lookup_needed`, `adset_details_needed`, ...)
+to'g'ridan-to'g'ri `params` ob'ekti ICHIDA, bir xil darajada joylashadi.
+Ularni qo'shimcha ichki ob'ekt (masalan `audience_change`) ichiga JOYLASHTIRMANG
+— bu ijro bosqichida "kerakli maydon topilmadi" xatosiga olib keladi.
 
 ## Ikki bosqichli aniqlashtirish (siz kontekst limitidan oshib ketmasligi uchun MUHIM)
 

@@ -128,11 +128,44 @@ def _require(action: dict, *path: str):
     return node
 
 
+def _require_any(action: dict, *paths: tuple) -> object:
+    """`_require()`ga o'xshaydi, lekin bir nechta mumkin bo'lgan joylashuvni
+    sinab ko'radi va birinchi topilganini qaytaradi. MUHIM: Targetolog ba'zan
+    `params.audience_change.targeting` o'rniga to'g'ridan-to'g'ri
+    `params.targeting` deb yozib qo'yadi (schema'ga qat'iy amal qilmaydi) —
+    bu real, tez-tez uchraydigan holat, shuning uchun kodni PROMPT'ga emas,
+    shu moslashuvchanlikka tayanamiz."""
+    for path in paths:
+        node = action
+        found = True
+        for key in path:
+            if isinstance(node, dict) and key in node:
+                node = node[key]
+            else:
+                found = False
+                break
+        if found:
+            return node
+    raise meta_api.MetaAPIError({
+        "message": (
+            "Targetolog action'ida kerakli maydon topilmadi (sinab ko'rilgan "
+            f"joylashuvlar: {[' > '.join(p) for p in paths]}). Qaytadan urinib "
+            "ko'ring yoki buyruqni boshqacharoq/aniqroq yozing."
+        ),
+        "tried_paths": [".".join(p) for p in paths],
+        "action_received": action,
+    })
+
+
 def _execute_fix_region(action: dict) -> dict:
     """4.11-bo'lim: 'faqat joriy shahar' sozlamasini qo'llaydi va qayta o'qib
     tasdiqlaydi."""
     adset_id = _require(action, "object_id")
-    city_key = _require(action, "params", "audience_change", "city_key")
+    city_key = _require_any(
+        action,
+        ("params", "audience_change", "city_key"),
+        ("params", "city_key"),
+    )
     meta_api.set_location_current_city_only(adset_id, city_key)
     verified = meta_api.get_adset_details(adset_id)
     return {"verified": True, "current_targeting": verified.get("targeting", {})}
@@ -144,7 +177,11 @@ def _execute_adjust_audience(action: dict) -> dict:
     haqiqatan saqlanganini tasdiqlaydi. Tasdiqlanmasa — bajarilgan deb ko'rsatilmaydi,
     xato sifatida qaytariladi (foydalanuvchi buni Telegram'da ❌ bilan ko'radi)."""
     adset_id = _require(action, "object_id")
-    new_targeting = _require(action, "params", "audience_change", "targeting")
+    new_targeting = _require_any(
+        action,
+        ("params", "audience_change", "targeting"),
+        ("params", "targeting"),
+    )
     meta_api.update_targeting(adset_id, new_targeting)
 
     verified = meta_api.get_adset_details(adset_id)

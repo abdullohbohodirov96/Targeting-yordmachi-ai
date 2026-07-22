@@ -279,7 +279,14 @@ def _call_agent(system_prompt: str, user_content: str) -> dict:
     # birinchisi to'liq narxda hisoblanadi.
     response = client.messages.create(
         model=MODEL,
-        max_tokens=2500,  # xarajatni cheklash uchun kamaytirildi (avval 4000)
+        # MUHIM: 2500 token bilan ba'zan (ayniqsa ikki bosqichli aniqlashtirish
+        # so'rovida, xabar kattaroq bo'lganda) javob o'rtada kesilib qolib,
+        # JSON buzilib, "Targetolog JSON qaytarmadi" xatosiga olib kelardi.
+        # 4000ga oshirildi — bu MAX chegara, real xarajat qancha token
+        # ishlatilganiga bog'liq (kesilib ketmasa, ko'pincha ancha kamroq
+        # ishlatiladi), shuning uchun xarajatni sezilarli oshirmaydi, lekin
+        # muvaffaqiyatsiz/qayta urinishlarni oldini oladi.
+        max_tokens=4000,
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user_content}],
     )

@@ -214,6 +214,34 @@ def adjust_budget_by_percent(adset_id: str, current_daily_budget_cents: int, per
 # AUDITORIYA / HUDUD SOZLAMALARI (4.11-bo'lim)
 # ---------------------------------------------------------------------------
 
+def _sanitize_targeting_for_write(targeting: dict) -> dict:
+    """Meta Graph API'dan GET orqali o'qilgan targeting obyektida ba'zan
+    yozib bo'lmaydigan/normalizatsiya qilinmaydigan qiymatlar uchraydi
+    (masalan `targeting_automation.individual_setting` ichida kutilmagan
+    kalit/qiymat, "Normalization does not allow the value ..." xatosi).
+    Bunday obyektni o'zgarishsiz qaytarib yuborish Meta'dan "Invalid
+    parameter" xatosiga olib keladi.
+
+    Bu funksiya `targeting_automation.individual_setting`da FAQAT ma'lum,
+    xavfsiz deb bilingan kalitlarni (age/gender/geo, qiymati 0 yoki 1)
+    qoldiradi, qolganini olib tashlaydi. Original `targeting` obyekti
+    o'zgartirilmaydi (nusxa qaytariladi)."""
+    targeting = dict(targeting)
+    automation = targeting.get("targeting_automation")
+    if isinstance(automation, dict) and isinstance(automation.get("individual_setting"), dict):
+        automation = dict(automation)
+        safe_individual = {
+            k: v for k, v in automation["individual_setting"].items()
+            if k in ("age", "gender", "geo") and v in (0, 1)
+        }
+        if safe_individual:
+            automation["individual_setting"] = safe_individual
+        else:
+            automation.pop("individual_setting", None)
+        targeting["targeting_automation"] = automation
+    return targeting
+
+
 def set_location_current_city_only(adset_id: str, city_key: str) -> dict:
     """Ad Set targeting'ini faqat joriy shaharga cheklaydi va avtokengaytirishni
     o'chiradi ("Reach more people likely to respond" -> off)."""
@@ -224,12 +252,13 @@ def set_location_current_city_only(adset_id: str, city_key: str) -> dict:
         },
         "targeting_automation": {"advantage_audience": 0},  # auto-expansion off
     }
-    return _post(adset_id, {"targeting": targeting})
+    return _post(adset_id, {"targeting": _sanitize_targeting_for_write(targeting)})
 
 
 def update_targeting(adset_id: str, targeting: dict) -> dict:
-    """Ad Set auditoriyasini to'liq yangi targeting spec bilan almashtiradi."""
-    return _post(adset_id, {"targeting": targeting})
+    """Ad Set auditoriyasini to'liq yangi targeting spec bilan almashtiradi.
+    Yozishdan oldin avtomatik ravishda xavfsizlashtiriladi (`_sanitize_targeting_for_write`)."""
+    return _post(adset_id, {"targeting": _sanitize_targeting_for_write(targeting)})
 
 
 def search_geo_location(query: str, location_types: list[str] | None = None) -> list[dict]:

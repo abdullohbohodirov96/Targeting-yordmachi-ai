@@ -492,6 +492,10 @@ def handle_chat_command(user_text: str, recent_history: list[dict] | None = None
         max_tokens=20,
         system=(
             "Foydalanuvchi xabari qaysi turga kiradi? Faqat bitta so'z bilan javob ber:\n"
+            "ANALYSIS — agar foydalanuvchi BUTUN hisobni yoki bir nechta kampaniyani "
+            "KENG QAMROVLI tahlil qilishni so'rasa (masalan: 'hisobimni tahlil qil', "
+            "'targetni to'liq tekshir', 'nima muammo bor', 'umumiy holatni ko'rsat') — "
+            "bitta aniq obyektga qaratilgan tor savol EMAS, balki to'liq audit so'ralganda.\n"
             "ACTION — agar amaliy buyruq bo'lsa: yangi target/kampaniya yoqish, mavjud "
             "reklamani to'xtatish/yoqish, byudjet o'zgartirish, abtest boshlash, auditoriya/"
             "hudud o'zgartirish (masalan biror viloyat/shaharni QO'SHISH yoki OLIB TASHLASH/"
@@ -509,6 +513,8 @@ def handle_chat_command(user_text: str, recent_history: list[dict] | None = None
     )
     verdict = intent_check.content[0].text.strip().upper()
 
+    if "ANALYSIS" in verdict:
+        return run_analysis_cycle(dry_run=False)
     if "ACTION" in verdict:
         return _run_pipeline_command(user_text, history_text)
     if "METRIC" in verdict:
@@ -528,12 +534,28 @@ def _run_pipeline_command(user_text: str, history_text: str) -> str:
     except meta_api.MetaAPIError as e:
         return f"⚠️ Meta hisobi bilan bog'lanib bo'lmadi: {e}"
 
+    # MUHIM: faqat nom+ID (account_structure) yetarli emas — Targetolog
+    # pause/resume/byudjet kabi qarorlarni ham, oddiy "qancha xarajat bo'ldi"
+    # kabi savolларни ham REAL ko'rsatkichlarsiz to'g'ri bera olmaydi va aks
+    # holda foydalanuvchidan "raqamlarni o'zingiz Ads Manager'dan kiriting" deb
+    # so'rab qo'yadi. Kampaniya darajasida (yengil, ko'p token yemaydi) so'nggi
+    # 7 kunlik CPM/CTR/CPA/spend/reach/frequency shu yerda beriladi. Chuqurroq
+    # (ad-darajasidagi) raqam kerak bo'lsa, foydalanuvchi buni aytadi va METRIC
+    # intent orqali `answer_data_question` to'liq ad-level hisobotni oladi.
+    try:
+        campaign_insights = meta_api.get_insights(level="campaign", date_preset="last_7d")
+        insights_json = json.dumps(campaign_insights, ensure_ascii=False, indent=2)
+    except meta_api.MetaAPIError as e:
+        insights_json = f"(statistika olinmadi: {e})"
+
     message = (
         "Foydalanuvchi Telegram orqali quyidagi amaliy buyruqni berdi (kerak bo'lsa "
         f"suhbat konteksti bilan birga):{history_text}\n\n"
         f"Yangi xabar: \"{user_text}\"\n\n"
         "Joriy hisobdagi kampaniya/adset/ad nomlari va ID'lari (targeting "
         f"tafsilotlarisiz — kerak bo'lsa alohida so'rang):\n{structure_json}\n\n"
+        f"So'nggi 7 kunlik kampaniya darajasidagi statistika (CPM/CTR/CPC/spend/"
+        f"reach/frequency/actions):\n{insights_json}\n\n"
         "Agar buyruqda hudud/shahar/tuman nomi (masalan \"Chirchiq\", \"Zangiota\") "
         "qo'shish yoki chiqarib tashlash (exclude) kerak bo'lsa-yu, lekin sizda "
         "ularning Meta rasmiy geo-target kaliti (key) yo'q bo'lsa — `no_action` "

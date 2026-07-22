@@ -127,5 +127,12 @@ raqamlar bilan yozilgan xulosa bo'lsin (masalan: "3 ta adset yaxshi ishlayapti,
   toki Marketolog agent tasdiqlamaguncha va orchestrator uni bajarmaguncha.
 - Agar ma'lumot yetarli bo'lmasa (masalan region breakdown yo'q), `no_action` qaytar
   va qaysi ma'lumot kerakligini `reason` maydonida aniq yoz.
+- **Statistika bo'sh/yo'q bo'lsa**: senga berilgan `insights` ma'lumoti bo'sh
+  ro'yxat bo'lishi mumkin — bu odatda haqiqiy sabab bilan bog'liq (masalan
+  barcha kampaniyalar pauzalangan va so'nggi 7 kunda hech qanday xarajat/
+  ko'rsatish bo'lmagan). Bunday holda foydalanuvchidan raqamlarni Ads
+  Manager'dan qo'lda topib kiritishni **HECH QACHON so'rama** — buning o'rniga
+  aniq sababni ayt (masalan: "So'nggi 7 kunda faol kampaniya bo'lmagani uchun
+  statistika yo'q — X ta kampaniya pauzada, oxirgi faollik sanasi noma'lum").
 - Hech qachon xayoliy raqam yoki natija o'ylab topma — faqat senga berilgan
   insights ma'lumotlariga tayan.

@@ -38,7 +38,7 @@ BASE_DIR = Path(__file__).parent
 KNOWLEDGE_BASE = (BASE_DIR / "target_master_agent.md").read_text(encoding="utf-8")
 
 MODEL = "claude-sonnet-4-5"
-MAX_HISTORY_MESSAGES = 20
+MAX_HISTORY_MESSAGES = 10  # xarajatni kamaytirish uchun kamaytirildi (avval 20)
 
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
@@ -174,7 +174,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         response = client.messages.create(
             model=MODEL,
-            max_tokens=1500,
+            max_tokens=1000,  # xarajatni kamaytirish uchun kamaytirildi
             # cache_control — bilim bazasi (KNOWLEDGE_BASE) har xabarda bir xil
             # bo'lgani uchun keshlanadi, xarajatni sezilarli kamaytiradi.
             system=[{"type": "text", "text": KNOWLEDGE_BASE, "cache_control": {"type": "ephemeral"}}],

@@ -46,6 +46,10 @@ TARGETOLOG_SYSTEM = f"{TARGETOLOG_ROLE}\n\n---\n\n# BILIM BAZASI\n\n{KNOWLEDGE_B
 MARKETOLOG_SYSTEM = f"{MARKETOLOG_ROLE}\n\n---\n\n{ACTION_SCHEMA}"
 
 MODEL = "claude-sonnet-4-5"
+# Intent-check (ACTION/METRIC/GENERAL aniqlash) har bir Telegram xabarida ishlaydi
+# va bilim bazasidan foydalanmaydi — shuning uchun arzon/tez model yetarli.
+# Agar bu model xatolik bersa, INTENT_MODEL'ni yana MODEL'ga o'zgartiring.
+INTENT_MODEL = "claude-haiku-4-5-20251001"
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
 # Har bir action_plan tipi -> uni haqiqiy hisobda bajaradigan funksiya
@@ -238,7 +242,7 @@ def _call_agent(system_prompt: str, user_content: str) -> dict:
     # birinchisi to'liq narxda hisoblanadi.
     response = client.messages.create(
         model=MODEL,
-        max_tokens=4000,
+        max_tokens=2500,  # xarajatni cheklash uchun kamaytirildi (avval 4000)
         system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
         messages=[{"role": "user", "content": user_content}],
     )
@@ -447,7 +451,7 @@ def handle_chat_command(user_text: str, recent_history: list[dict] | None = None
         )
 
     intent_check = client.messages.create(
-        model=MODEL,
+        model=INTENT_MODEL,
         max_tokens=20,
         system=(
             "Foydalanuvchi xabari qaysi turga kiradi? Faqat bitta so'z bilan javob ber:\n"
@@ -588,7 +592,7 @@ def answer_data_question(user_text: str, history_text: str = "") -> str:
     )
     response = client.messages.create(
         model=MODEL,
-        max_tokens=1200,
+        max_tokens=800,  # xarajatni cheklash uchun kamaytirildi
         # cache_control — xuddi _call_agent'dagi kabi, statik qismini keshlab
         # xarajatni kamaytiradi.
         system=[{"type": "text", "text": data_qa_system, "cache_control": {"type": "ephemeral"}}],

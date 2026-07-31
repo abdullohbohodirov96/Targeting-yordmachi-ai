@@ -369,30 +369,39 @@ def gather_data() -> dict:
 
 
 def _format_json_error(e: "TargetologFormatError", stage: str = "Targetolog") -> str:
+    """Xato yuz berganda foydalanuvchiga ODDIY, QISQA matn ko'rsatiladi —
+    xom JSON/model javobi hech qachon ko'rsatilmaydi (bu "kod"dek ko'rinib,
+    tushunarsiz bo'ladi). To'liq texnik tafsilot faqat server logiga yoziladi
+    (debug uchun), Telegram'ga chiqmaydi."""
     logger.error("%s JSON qaytarmadi. Xom javob: %s", stage, e.raw_text[:1000])
     return (
-        f"⚠️ Buyruqni to'liq amalga oshira olmadim ({stage} bosqichida) — kerakli "
-        "ma'lumot (masalan aniq kampaniya/adset nomi yoki ID) yetarli emas edi, "
+        "⚠️ Buni to'liq bajara olmadim — kerakli ma'lumot yetarli emas edi "
+        "(masalan aniq qaysi reklama/kampaniya haqida ekani noaniq bo'ldi) "
         "yoki so'rov juda murakkab bo'ldi.\n\n"
-        "Model qanday javob berganini ko'rsataman (bu bajarilmadi, faqat matn):\n\n"
-        f"{e.raw_text[:1200]}"
+        "Iltimos, aniqroq yozib qayta yuboring (masalan kampaniya nomini "
+        "to'liq ko'rsating)."
     )
 
 
-def _run_pipeline(targetolog_user_message: str, dry_run: bool = False) -> str:
+_EMPTY_STATS = {"succeeded": 0, "failed": 0, "skipped": 0, "manual_suggestions": 0}
+
+
+def _run_pipeline(targetolog_user_message: str, dry_run: bool = False) -> tuple[str, dict]:
     """Targetolog -> Marketolog -> ijro zanjirining umumiy o'zagi. Buni ham
     to'liq hisob tahlili (`run_analysis_cycle`), ham Telegram'dagi erkin
     buyruqlar (`handle_chat_command`) chaqiradi — ikkalasi ham xuddi shu
-    ikki bosqichli nazoratdan o'tadi."""
+    ikki bosqichli nazoratdan o'tadi. `(matn, statistika)` qaytaradi —
+    statistika kunlik cron hisobotida "diqqatga loyiqmi" degan qarorni
+    matnni regex bilan tahlil qilmasdan, to'g'ridan-to'g'ri aniqlash uchun."""
     logger.info("Targetolog agentga so'rov yuborilmoqda...")
     try:
         targetolog_plan = _call_agent(TARGETOLOG_SYSTEM, targetolog_user_message)
     except TargetologFormatError as e:
-        return _format_json_error(e, "Targetolog")
+        return _format_json_error(e, "Targetolog"), dict(_EMPTY_STATS)
     return _finish_pipeline(targetolog_plan, dry_run)
 
 
-def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
+def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> tuple[str, dict]:
     """Targetolog allaqachon tuzgan action_plan'ni Marketolog'ga tekshirtiradi
     va tasdiqlangan action'larni ijro etadi. `_run_pipeline` va geo-lookup
     ikki bosqichli oqimi (`_run_pipeline_command`) ikkalasi ham shu yerga kelib
@@ -425,11 +434,11 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
             )
         except TargetologFormatError as e:
             logger.error("Marketolog JSON qaytarmadi. Xom javob: %s", e.raw_text[:1000])
-            return (
-                "⚠️ Targetolog taklif berdi, lekin Marketolog tekshiruvida ichki xatolik "
-                "yuz berdi. Qaytadan urinib ko'ring.\n\n"
-                f"Targetolog taklifi: {targetolog_plan.get('summary', '')}"
+            text = (
+                "⚠️ Ichki tekshiruvda xatolik chiqdi, qaytadan urinib ko'ring.\n\n"
+                f"{targetolog_plan.get('summary', '')}"
             )
+            return text, dict(_EMPTY_STATS)
 
     succeeded, failed, skipped = [], [], []
     if not dry_run:
@@ -437,6 +446,13 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
             idx = decision["action_index"]
             action = targetolog_plan["actions"][idx]
             action_type = action["type"]
+
+            if action_type == "no_action":
+                # "Hech narsa qilmaslik" — bu XATO yoki KUTILMAGAN holat emas,
+                # aksincha hammasi joyida degani. Statistikaga (succeeded/
+                # failed/skipped) kirmaydi — aks holda kunlik cron "hammasi
+                # yaxshi bo'lsa xabar yubormaslik" mantig'i ishlamay qolardi.
+                continue
 
             if decision["decision"] not in ("approved", "approved_with_edit"):
                 skipped.append({"action": action, "decision": decision})
@@ -479,41 +495,44 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> str:
     log_path = LOGS_DIR / f"run_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}.json"
     log_path.write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    report_lines = [
-        "📊 Target Master — hisobot",
-        "",
-        f"🎯 Targetolog: {targetolog_plan.get('summary', '')}",
-    ]
-    if not skip_marketolog:
-        report_lines.append(f"✅ Marketolog: {marketolog_review.get('review_summary', '')}")
-    report_lines += [
-        "",
-        f"✅ Muvaffaqiyatli bajarildi: {len(succeeded)}",
-        f"❌ Xato bilan tugadi: {len(failed)}",
-        f"⏭ Qo'lda ko'rib chiqish/rad etilgan: {len(skipped)}",
-    ]
-    if failed:
-        report_lines.append("")
-        report_lines.append("❌ Xatolar (Meta hisobda hech narsa o'zgarmadi):")
-        for f in failed:
-            obj_name = f["action"].get("object_name", f["action"].get("object_id", "?"))
-            report_lines.append(f"  • {obj_name}: {f['error']}")
+    # ODDIY, QISQA hisobot — texnik hisob-kitob emas, oddiy odamga
+    # tushunarli xabar. Targetolog'ning o'z xulosasi (`summary`) allaqachon
+    # oddiy tilda yozilgan bo'lishi kerak (system prompt shuni talab qiladi);
+    # bu yerda faqat qisqa amaliy qo'shimcha qilinadi.
     creative_or_form_actions = [
         a for a in targetolog_plan.get("actions", [])
         if a["type"] in ("replace_creative", "create_instant_form")
     ]
+
+    report_lines = [targetolog_plan.get("summary", "").strip()]
+
+    if succeeded:
+        report_lines.append(f"\n✅ {len(succeeded)} ta o'zgarish qildim.")
+    if failed:
+        names = ", ".join(
+            f["action"].get("object_name", f["action"].get("object_id", "?"))
+            for f in failed[:5]
+        )
+        extra = f" va yana {len(failed) - 5} tasi" if len(failed) > 5 else ""
+        report_lines.append(f"\n⚠️ {len(failed)} tasida xatolik chiqdi ({names}{extra}) — hisobda hech narsa o'zgarmadi.")
     if creative_or_form_actions:
-        report_lines.append("")
-        report_lines.append("🎨 Qo'lda bajarish kerak bo'lgan takliflar:")
-        for a in creative_or_form_actions:
-            report_lines.append(f"  • {a['object_name']}: {a['reason']}")
+        names = ", ".join(a.get("object_name", "?") for a in creative_or_form_actions[:5])
+        report_lines.append(f"\n🎨 Bularga sizning tasdig'ingiz kerak: {names}.")
 
-    return "\n".join(report_lines)
+    text = "\n".join(line for line in report_lines if line).strip()
+    stats = {
+        "succeeded": len(succeeded),
+        "failed": len(failed),
+        "skipped": len(skipped),
+        "manual_suggestions": len(creative_or_form_actions),
+    }
+    return text, stats
 
 
-def run_analysis_cycle(dry_run: bool = False) -> str:
-    """To'liq hisobni tahlil qiladi (barcha kampaniya/adset/ad + region breakdown).
-    Telegram bot `/analyze` buyrug'i shu funksiyani chaqiradi."""
+def run_analysis_cycle_with_stats(dry_run: bool = False) -> tuple[str, dict]:
+    """`run_analysis_cycle()` bilan bir xil, lekin matn bilan birga aniq
+    statistikani (`{"succeeded", "failed", "skipped", "manual_suggestions"}`)
+    ham qaytaradi — matnni regex bilan "tahlil qilish" shart emas."""
     data = gather_data()
     data_json = json.dumps(data, ensure_ascii=False, indent=2)
     return _run_pipeline(
@@ -522,26 +541,23 @@ def run_analysis_cycle(dry_run: bool = False) -> str:
     )
 
 
+def run_analysis_cycle(dry_run: bool = False) -> str:
+    """To'liq hisobni tahlil qiladi (barcha kampaniya/adset/ad + region breakdown).
+    Telegram bot `/analyze` buyrug'i shu funksiyani chaqiradi."""
+    text, _stats = run_analysis_cycle_with_stats(dry_run=dry_run)
+    return text
+
+
 def run_daily_cron_report(dry_run: bool = False) -> str | None:
     """VERCEL CRON UCHUN: `run_analysis_cycle()` bilan bir xil to'liq tahlilni
     ishga tushiradi, lekin foydalanuvchiga faqat DIQQATGA LOYIQ narsa bo'lsa
     (biror action bajarildi/xato berdi/qo'lda ko'rib chiqish kerak bo'lsa)
     xabar qaytaradi. Agar hisobda hech narsa o'zgarmagan va hammasi joyida
-    bo'lsa (0 ta bajarilgan, 0 ta xato, 0 ta qo'lda ko'rib chiqish, qo'lda
-    bajarish kerak bo'lgan taklif yo'q) — `None` qaytaradi, ya'ni kunlik
-    "hammasi joyida" degan bo'sh xabar bilan bezovta qilinmaydi."""
-    text = run_analysis_cycle(dry_run=dry_run)
+    bo'lsa — `None` qaytaradi, ya'ni kunlik "hammasi joyida" degan bo'sh
+    xabar bilan bezovta qilinmaydi."""
+    text, stats = run_analysis_cycle_with_stats(dry_run=dry_run)
 
-    def _count(label: str) -> int:
-        m = re.search(rf"{label}:\s*(\d+)", text)
-        return int(m.group(1)) if m else 0
-
-    succeeded = _count("✅ Muvaffaqiyatli bajarildi")
-    failed = _count("❌ Xato bilan tugadi")
-    skipped = _count("⏭ Qo'lda ko'rib chiqish/rad etilgan")
-    has_manual_suggestions = "🎨 Qo'lda bajarish kerak bo'lgan takliflar" in text
-
-    if succeeded == 0 and failed == 0 and skipped == 0 and not has_manual_suggestions:
+    if not any(stats.values()):
         return None
     return text
 
@@ -754,7 +770,8 @@ def _run_pipeline_command(user_text: str, history_text: str) -> str:
         except TargetologFormatError as e:
             return _format_json_error(e, "Targetolog (aniqlashtirish)")
 
-    return _finish_pipeline(targetolog_plan, dry_run=False)
+    text, _stats = _finish_pipeline(targetolog_plan, dry_run=False)
+    return text
 
 
 def answer_data_question(user_text: str, history_text: str = "") -> str:

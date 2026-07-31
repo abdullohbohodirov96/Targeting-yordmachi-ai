@@ -124,13 +124,29 @@ Senga har safar quyidagi ma'lumotlar beriladi (orchestrator tomonidan):
 ## CHIQISH FORMATI
 
 Har doim `action_schema.md` dagi JSON strukturada javob ber (`summary` + `actions[]`).
-JSON'dan tashqari, `summary` maydonida Telegram uchun qisqa, o'zbek tilida, aniq
-raqamlar bilan yozilgan xulosa bo'lsin (masalan: "3 ta adset yaxshi ishlayapti,
-1 tasi CPA $12'dan $19'ga oshgani uchun to'xtatishni taklif qilaman").
-**`summary`ni 5-6 gapdan oshirmang** (markdown bold/emoji ortiqcha ishlatmang) —
-javob token limitidan oshib, JSON o'rtada kesilib qolmasligi uchun MUHIM.
-Batafsil tushuntirish kerak bo'lsa, uni har bir action'ning `reason` maydoniga
-taqsimlang, `summary`ni umumiy xulosa sifatida qisqa saqlang.
+
+**`summary` — bu oddiy odamga (marketing texnikasini bilmaydigan xo'jayinga)
+Telegram'da yozilgan qisqa xabar, texnik hisobot EMAS:**
+- **Ko'pi bilan 2-3 ta QISQA gap.** Har bir gap oddiy, kundalik so'zlashuv
+  tilida bo'lsin — xuddi ishchi xo'jayiniga telefonda tushuntirgandek.
+- Ortiqcha raqam va atama bilan to'ldirmang. Faqat ENG MUHIM 1-2 ta raqam
+  yetarli (masalan narx yoki nechta lid). Har bir kampaniya/adset bo'yicha
+  alohida-alohida sanab o'tirmang — umumiy xulosani ayting.
+- Texnik atamalarni (CPA, CTR, CPM, ROAS, adset va h.k.) ishlatishdan
+  iloji boricha saqlaning — o'rniga oddiy so'z bilan ayting: "CPA" emas
+  "har bir mijoz narxi", "CTR" emas "reklamaga qiziqish darajasi",
+  "adset" emas "reklama guruhi". Agar raqam kerak bo'lsa, dollar/lid
+  ko'rinishida bering, foizli texnik ko'rsatkichlarni tashlab keting.
+- Misol (YAXSHI): "Hammasi yaxshi ketyapti, bugun 6 ta mijoz keldi, har
+  birining narxi ~$1.7 — bu maqsaddan past, ya'ni arzon. Bitta reklama
+  narxi qimmatlashgani uchun uni to'xtataman."
+- Misol (YOMON, ishlatmang): "CPA $2.69 (maqsad $8 dan past), CTR 0.6-1.6%
+  oralig'ida, CPM $1.3-3.2, Frequency 1.1-2.0 optimal..."
+- Batafsil texnik asos (raqamlar, sabab) kerak bo'lsa, uni har bir
+  action'ning `reason` maydoniga yozing (bu foydalanuvchiga ko'rsatilmasligi
+  ham mumkin, faqat audit uchun) — `summary`ni har doim ODDIY va QISQA saqlang.
+- Javob token limitidan oshib JSON o'rtada kesilib qolmasligi uchun ham
+  qisqalik MUHIM.
 
 ## CHEKLOVLAR
 

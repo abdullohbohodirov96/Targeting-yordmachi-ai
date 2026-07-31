@@ -35,8 +35,23 @@ logger = logging.getLogger("orchestrator")
 
 BASE_DIR = Path(__file__).parent
 AGENTS_DIR = BASE_DIR / "agents"
+
+# MUHIM (Vercel/serverless muhitlar uchun): loyiha papkasi (BASE_DIR) serverless
+# funksiyada FAQAT O'QISH uchun ochiq — yozish (mkdir/write) imkonsiz bo'lishi
+# mumkin ("Read-only file system" xatosi, bu butun modulni import qilishda
+# ko'tarilib, HAR BIR so'rovni "FUNCTION_INVOCATION_FAILED" bilan buzadi).
+# Shuning uchun avval BASE_DIR/logs'ga yozishga urinamiz (VPS/mahalliy uchun —
+# haqiqiy, doimiy log), muvaffaqiyatsiz bo'lsa /tmp'ga qaytamiz (Vercel'da
+# yagona yoziladigan joy — instance ichida vaqtinchalik, lekin dastur
+# yiqilib qolmaydi).
+import tempfile as _tempfile
+
 LOGS_DIR = BASE_DIR / "logs"
-LOGS_DIR.mkdir(exist_ok=True)
+try:
+    LOGS_DIR.mkdir(exist_ok=True)
+except OSError:
+    LOGS_DIR = Path(_tempfile.gettempdir()) / "target_master_logs"
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 KNOWLEDGE_BASE = (BASE_DIR / "target_master_agent.md").read_text(encoding="utf-8")
 TARGETOLOG_ROLE = (AGENTS_DIR / "targetolog_system_prompt.md").read_text(encoding="utf-8")

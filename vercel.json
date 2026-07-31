@@ -8,7 +8,7 @@
   "functions": {
     "api/index.py": {
       "maxDuration": 60,
-      "includeFiles": "{*.py,*.md,*.json,agents/**}"
+      "includeFiles": "**"
     }
   }
 }

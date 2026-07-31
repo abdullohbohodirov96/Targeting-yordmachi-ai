@@ -168,3 +168,56 @@ natija Telegram'ga qaytadi.
 4. Vaqt o'tishi bilan `logs/run_*.json` tarixidan foydalanib, Marketolog agentga
    "avvalgi takliflar qanday natija bergani" tarixini ham berish mumkin — bu
    qarorlar sifatini yanada oshiradi.
+
+## Vercel'ga joylashtirish (webhook rejimi)
+
+MVP endi ikki rejimda ishlay oladi:
+- **`telegram_bot.py`** (eski, long-polling) — o'z serveringiz/VPS'da doimiy jarayon sifatida.
+- **`api/index.py`** (yangi, webhook) — **Vercel** kabi serverless platformalar uchun. Quyida shu haqida.
+
+### Nima o'zgardi
+
+Vercel'da har bir so'rov alohida, qisqa muddatli funksiya sifatida ishlaydi — doimiy
+jarayon (`run_polling()`, `JobQueue`) saqlab bo'lmaydi. Shu sababli:
+
+- Telegram xabarlari endi **webhook** orqali keladi (`POST /api/webhook`), long-polling emas.
+- "Har kuni" ishlaydigan tahlil va "har 4 soatda" byudjet tekshiruvi endi alohida
+  cron endpoint'lar: `GET /api/cron/daily`, `GET /api/cron/budget`.
+- Holat (suhbat tarixi, oxirgi hisobot, byudjet balansi) endi mahalliy faylda emas,
+  **Vercel KV** (yoki mustaqil Upstash Redis)'da saqlanadi — `kv_store.py`.
+- Kunlik hisobot endi faqat **diqqatga loyiq narsa bo'lsa** yuboriladi (nechta action
+  bajarildi/xato berdi/qo'lda ko'rib chiqish kerak) — hammasi joyida bo'lsa, bo'sh
+  xabar bilan bezovta qilinmaydi (`orchestrator.run_daily_cron_report`).
+
+### Qadamlar
+
+1. **Vercel loyihasi yarating** — bu repo'ni Vercel'ga ulang (GitHub import) yoki
+   `vercel` CLI bilan (`vercel --prod`) joylashtiring.
+2. **Vercel KV qo'shing** — loyiha -> Storage -> Create Database -> KV. Bu avtomatik
+   `KV_REST_API_URL` / `KV_REST_API_TOKEN` environment variable'larini qo'shadi.
+3. **Environment Variables** (Settings -> Environment Variables) — `.env.example`
+   faylidagi hammasini kiriting: `TELEGRAM_BOT_TOKEN`, `ANTHROPIC_API_KEY`,
+   `META_ACCESS_TOKEN`, `META_AD_ACCOUNT_ID`, `META_PAGE_ID` (ixtiyoriy), `CRON_SECRET`
+   (o'zingiz o'ylab toping, masalan `openssl rand -hex 24`).
+4. **Deploy** qiling.
+5. **Telegram webhook'ni ro'yxatdan o'tkazing** (bir martalik, deploy domeningiz bilan):
+   ```bash
+   curl "https://api.telegram.org/bot<TELEGRAM_BOT_TOKEN>/setWebhook?url=https://<domeningiz>.vercel.app/api/webhook"
+   ```
+6. Botga Telegram'da `/start` yozing — shu chat kunlik hisobot/ogohlantirish
+   yuboriladigan chat sifatida saqlanadi.
+7. `https://<domeningiz>.vercel.app/api/health` orqali barcha kerakli
+   environment variable'lar to'g'ri o'rnatilganini tekshiring.
+
+### Cron chastotasi haqida muhim eslatma
+
+Vercel **Hobby (bepul) rejasida** cron faqat **kuniga bir marta** ishlaydi — `vercel.json`
+shunga mos qilib faqat `/api/cron/daily` (soat 08:00) ni o'z ichiga oladi. "Har 4
+soatda" byudjet tekshiruvi (`/api/cron/budget`) Hobby rejada Vercel Cron orqali
+ishlamaydi — buning uchun ikkita variant bor:
+- **Tavsiya (bepul):** tashqi cron xizmati (masalan [cron-job.org](https://cron-job.org))
+  orqali `https://<domeningiz>.vercel.app/api/cron/budget?secret=<CRON_SECRET>`
+  manzilini har 4 soatda chaqirtiring.
+- **Yoki:** Vercel **Pro** rejaga o'ting — shunda `vercel.json`ga
+  `{"path": "/api/cron/budget", "schedule": "0 */4 * * *"}` qo'shib, to'g'ridan-to'g'ri
+  Vercel Cron orqali ishlatish mumkin.

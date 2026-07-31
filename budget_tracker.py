@@ -3,6 +3,10 @@ budget_tracker.py — Reklama hisobiga qancha pul "tushirilgani" (deposit) va
 joriy REAL xarajat sur'atiga (burn-rate) qarab bu pul necha kunga/qachongacha
 yetishini hisoblaydigan modul.
 
+VERCEL UCHUN MOSLASHTIRILDI: holat endi mahalliy faylda emas, `kv_store.py`
+orqali tashqi KV/Redis'da saqlanadi (Vercel'da fayl tizimi so'rovlar orasida
+saqlanmaydi).
+
 Ishlash mantig'i:
   - Foydalanuvchi Telegram'da "bugun 500$ tushdi" desa -> `record_deposit()`
     balansga 500 qo'shadi.
@@ -13,21 +17,17 @@ Ishlash mantig'i:
   - `get_status()` — joriy balans + so'nggi 3 kunlik o'rtacha kunlik xarajat
     (burn-rate) asosida necha kunga yetishini va taxminiy tugash sanasini
     hisoblab qaytaradi.
-  - `check_and_alert()` — Telegram bot JobQueue orqali muntazam chaqiriladi;
-    balans belgilangan chegaradan (odatda $100) pastga tushsa, foydalanuvchi
+  - `check_and_alert()` — cron (/api/cron/budget) muntazam chaqiradi; balans
+    belgilangan chegaradan (odatda $100) pastga tushsa, foydalanuvchi
     so'ramasa ham, birinchi bo'lib xabar yuborish uchun matn qaytaradi.
-
-Holat `budget_state.json` faylida saqlanadi (oddiy, DB shart emas — MVP).
 """
 
-import json
-from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 import meta_api
+import kv_store
 
-BASE_DIR = Path(__file__).parent
-STATE_PATH = BASE_DIR / "budget_state.json"
+STATE_KEY = "budget_state"
 
 DEFAULT_STATE = {
     "balance_usd": 0.0,
@@ -40,16 +40,16 @@ DEFAULT_STATE = {
 
 
 def _load_state() -> dict:
-    if not STATE_PATH.exists():
+    state = kv_store.get_json(STATE_KEY, default=None)
+    if state is None:
         return dict(DEFAULT_STATE)
-    state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
     for k, v in DEFAULT_STATE.items():
         state.setdefault(k, v)
     return state
 
 
 def _save_state(state: dict) -> None:
-    STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    kv_store.set_json(STATE_KEY, state)
 
 
 def _now_iso() -> str:
@@ -157,10 +157,9 @@ def format_status_message(status: dict) -> str:
 
 
 def check_and_alert() -> dict | None:
-    """Bot JobQueue orqali muntazam (masalan har 4 soatda) chaqiradi. Agar
-    balans chegaradan pastga tushgan bo'lsa va shu tushish uchun hali xabar
-    berilmagan bo'lsa — {'chat_id':..., 'message':...} qaytaradi, aks holda
-    `None`."""
+    """cron (/api/cron/budget) muntazam chaqiradi. Agar balans chegaradan
+    pastga tushgan bo'lsa va shu tushish uchun hali xabar berilmagan bo'lsa —
+    {'chat_id':..., 'message':...} qaytaradi, aks holda `None`."""
     state = _load_state()
     state = _reconcile(state)
     _save_state(state)

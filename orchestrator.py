@@ -19,6 +19,7 @@ ISHGA TUSHIRISH:
 """
 
 import os
+import re
 import json
 import logging
 from pathlib import Path
@@ -478,6 +479,30 @@ def run_analysis_cycle(dry_run: bool = False) -> str:
         f"Quyidagi ma'lumotlar asosida to'liq hisobni tahlil qilib action_plan tuzing:\n\n{data_json}",
         dry_run=dry_run,
     )
+
+
+def run_daily_cron_report(dry_run: bool = False) -> str | None:
+    """VERCEL CRON UCHUN: `run_analysis_cycle()` bilan bir xil to'liq tahlilni
+    ishga tushiradi, lekin foydalanuvchiga faqat DIQQATGA LOYIQ narsa bo'lsa
+    (biror action bajarildi/xato berdi/qo'lda ko'rib chiqish kerak bo'lsa)
+    xabar qaytaradi. Agar hisobda hech narsa o'zgarmagan va hammasi joyida
+    bo'lsa (0 ta bajarilgan, 0 ta xato, 0 ta qo'lda ko'rib chiqish, qo'lda
+    bajarish kerak bo'lgan taklif yo'q) — `None` qaytaradi, ya'ni kunlik
+    "hammasi joyida" degan bo'sh xabar bilan bezovta qilinmaydi."""
+    text = run_analysis_cycle(dry_run=dry_run)
+
+    def _count(label: str) -> int:
+        m = re.search(rf"{label}:\s*(\d+)", text)
+        return int(m.group(1)) if m else 0
+
+    succeeded = _count("✅ Muvaffaqiyatli bajarildi")
+    failed = _count("❌ Xato bilan tugadi")
+    skipped = _count("⏭ Qo'lda ko'rib chiqish/rad etilgan")
+    has_manual_suggestions = "🎨 Qo'lda bajarish kerak bo'lgan takliflar" in text
+
+    if succeeded == 0 and failed == 0 and skipped == 0 and not has_manual_suggestions:
+        return None
+    return text
 
 
 def handle_budget_message(user_text: str, chat_id: int) -> str:

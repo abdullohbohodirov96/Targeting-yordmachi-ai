@@ -1,3 +1,5 @@
-python-telegram-bot[job-queue]>=21.0
+# Vercel serverless (api/index.py) uchun — webhook rejimida ishlaydi, doimiy
+# jarayon/JobQueue kerak emas, shuning uchun python-telegram-bot shart emas.
+flask>=3.0.0
 anthropic>=0.34.0
 requests>=2.31.0

@@ -1,0 +1,5 @@
+# Eski (telegram_bot.py, long-polling) rejim uchun — agar Vercel emas, balki
+# o'z serveringiz/VPS'da doimiy jarayon sifatida ishga tushirmoqchi bo'lsangiz.
+python-telegram-bot[job-queue]>=21.0
+anthropic>=0.34.0
+requests>=2.31.0

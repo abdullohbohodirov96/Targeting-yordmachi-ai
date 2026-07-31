@@ -74,6 +74,32 @@ def tg_send(chat_id: int, text: str) -> None:
             logger.exception("Telegramga xabar yuborishda xatolik")
 
 
+def tg_send_status(chat_id: int, text: str) -> int | None:
+    """Vazifa bajarilayotganini ko'rsatuvchi vaqtinchalik xabar yuboradi
+    (masalan "⏳ Bajaryapman...") va Telegram'ning message_id'sini qaytaradi —
+    ish tugagach shu xabarni `tg_delete()` bilan o'chirish uchun."""
+    import requests
+    try:
+        r = requests.post(f"{TELEGRAM_API}/sendMessage", json={"chat_id": chat_id, "text": text}, timeout=20)
+        return (r.json().get("result") or {}).get("message_id")
+    except Exception:
+        logger.exception("Status xabar yuborishda xatolik")
+        return None
+
+
+def tg_delete(chat_id: int, message_id: int | None) -> None:
+    """`tg_send_status()` bilan yuborilgan vaqtinchalik xabarni o'chiradi —
+    xabar allaqachon yo'q bo'lsa ham (masalan foydalanuvchi o'zi o'chirgan
+    bo'lsa) xato bermaydi, jim o'tkazib yuboriladi."""
+    if not message_id:
+        return
+    import requests
+    try:
+        requests.post(f"{TELEGRAM_API}/deleteMessage", json={"chat_id": chat_id, "message_id": message_id}, timeout=20)
+    except Exception:
+        pass  # xabar allaqachon o'chirilgan/topilmasa muammo emas
+
+
 # ---------------------------------------------------------------------------
 # Suhbat tarixi / oxirgi hisobot — endi KV'da (chat_id bo'yicha)
 # ---------------------------------------------------------------------------
@@ -109,18 +135,23 @@ def save_last_report(chat_id: int, text: str) -> None:
 # ---------------------------------------------------------------------------
 
 WELCOME_TEXT = (
-    "👋 Salom! Men — Target Master.\n\n"
-    "💬 Savol bering — Meta Ads bo'yicha maslahat beraman.\n"
-    "📊 /analyze — hisobingizni tahlil qilib, tavsiyalar beraman "
-    "(Targetolog + Marketolog agentlar ishlaydi).\n"
-    "⏸ /pause <ad_id> — reklamani to'xtatish\n"
-    "▶️ /resume <ad_id> — reklamani qayta ishga tushirish\n"
-    "📋 /status — oxirgi tahlil hisobotini ko'rish\n"
-    "💰 \"bugun 500$ tushdi\" / \"qancha qoldi?\" — byudjet balansini kuzataman, "
-    "chegaradan pastga tushsa o'zim xabar beraman.\n"
-    "🔁 Har kuni avtomatik tahlil qilib, kerak bo'lmagan narsalarni o'zim "
-    "tuzataman/arxivlayman — faqat DIQQATGA LOYIQ narsa bo'lsa yozaman.\n"
-    "🔄 /reset — suhbat tarixini tozalash"
+    "👋 Salom! Men — Targetolog.\n\n"
+    "Men bilan oddiy odam bilan gaplashgandek yozavering — masalan:\n"
+    "\"IELTS kursi uchun yangi target yoq, kunlik $20, Toshkent\"\n"
+    "\"AB | Traffic | IG reklamani to'xtat\"\n"
+    "\"hisobim qanday ketyapti\"\n"
+    "Tushunaman va o'zim bajaraman — buyruq shart emas.\n\n"
+    "Narx keskin ko'tarilsa yoki target yaxshi natija bermasa, o'zim ko'rib "
+    "byudjetni kamaytiraman yoki auditoriyani o'zgartirib, CPL'ni tushirishga "
+    "harakat qilaman. Qo'limdan to'liq kelmasa, shunday deb ochiq aytaman va "
+    "tavsiya beraman — hech qachon \"bajardim\" deb yolg'on aytmayman.\n\n"
+    "Qisqa buyruqlar ham bor, xohlasangiz:\n"
+    "📊 /analyze — hisobni to'liq tahlil qilaman\n"
+    "📋 /status — oxirgi hisobotni ko'rsataman\n"
+    "⏸ /pause <ad_id>  ▶️ /resume <ad_id>\n"
+    "🔄 /reset — suhbatni tozalayman\n\n"
+    "💰 Byudjet haqida yozsangiz (\"bugun 500$ tushdi\"), kuzatib boraman.\n"
+    "🔁 Har kuni o'zim tekshirib turaman — diqqatga loyiq narsa bo'lsa, o'zim yozaman."
 )
 
 
@@ -141,12 +172,13 @@ def handle_command(chat_id: int, cmd: str, args: list[str]) -> None:
         return
 
     if cmd == "/analyze":
-        tg_send(chat_id, "⏳ Tahlil boshlandi — Targetolog va Marketolog ishlamoqda...")
+        status_id = tg_send_status(chat_id, "⏳ Bajaryapman... (hisobni tahlil qilyapman)")
         try:
             report = orchestrator.run_analysis_cycle(dry_run=False)
         except Exception as e:
             logger.exception("Tahlil xatosi")
             report = f"⚠️ Tahlil vaqtida xatolik: {e}"
+        tg_delete(chat_id, status_id)
         save_last_report(chat_id, report)
         tg_send(chat_id, report)
         return
@@ -180,12 +212,18 @@ def handle_free_text(chat_id: int, user_text: str) -> None:
     history = get_history(chat_id)
     budget_tracker.set_notify_chat_id(chat_id)
 
+    # Ish jarayonini ko'rsatuvchi vaqtinchalik xabar — foydalanuvchi bot
+    # "osilib qolganmi yoki ishlayaptimi" bilmay qolmasligi uchun. Ish
+    # tugagach (natija qanday bo'lishidan qat'iy nazar) shu xabar o'chiriladi.
+    status_id = tg_send_status(chat_id, "⏳ Bajaryapman...")
+
     try:
         command_result = orchestrator.handle_chat_command(
             user_text, recent_history=history, chat_id=chat_id
         )
     except Exception as e:
         logger.exception("handle_chat_command xatosi")
+        tg_delete(chat_id, status_id)
         tg_send(
             chat_id,
             f"⚠️ Buyruqni bajarishda kutilmagan xatolik yuz berdi: {e}\n\n"
@@ -194,6 +232,7 @@ def handle_free_text(chat_id: int, user_text: str) -> None:
         return
 
     if command_result is not None:
+        tg_delete(chat_id, status_id)
         save_last_report(chat_id, command_result)
         history.append({"role": "user", "content": user_text})
         history.append({"role": "assistant", "content": command_result})
@@ -215,6 +254,7 @@ def handle_free_text(chat_id: int, user_text: str) -> None:
         logger.exception("Claude API xatosi")
         answer = f"⚠️ Xatolik yuz berdi: {e}"
 
+    tg_delete(chat_id, status_id)
     history.append({"role": "assistant", "content": answer})
     save_history(chat_id, history)
     tg_send(chat_id, answer)
@@ -260,16 +300,43 @@ def _cron_authorized() -> bool:
     return request.args.get("secret") == CRON_SECRET
 
 
+def _daily_report_targets() -> list[int]:
+    """Kunlik hisobot qayerlarga yuborilishini aniqlaydi:
+    - Agar `TELEGRAM_AGENTS_GROUP_ID` va/yoki `TELEGRAM_REPORT_GROUP_ID` env
+      o'zgaruvchilari o'rnatilgan bo'lsa — hisobot shu guruh(lar)ga yuboriladi
+      (bittasi "agentlar" guruhi, bittasi toza "hisobot" guruhi — bir xil
+      matn ikkalasiga ham boradi).
+    - Aks holda, oxirgi /start bosgan shaxsiy chat'ga (eski, oddiy) rejim."""
+    targets: list[int] = []
+    for env_name in ("TELEGRAM_AGENTS_GROUP_ID", "TELEGRAM_REPORT_GROUP_ID"):
+        raw = os.environ.get(env_name)
+        if raw:
+            try:
+                targets.append(int(raw))
+            except ValueError:
+                logger.warning("%s noto'g'ri formatda: %r", env_name, raw)
+    if targets:
+        return targets
+    chat_id = budget_tracker.get_notify_chat_id()
+    return [chat_id] if chat_id is not None else []
+
+
 @app.route("/api/cron/daily", methods=["GET"])
 def cron_daily():
     if not _cron_authorized():
         return jsonify({"ok": False, "error": "unauthorized"}), 401
 
-    chat_id = budget_tracker.get_notify_chat_id()
-    if chat_id is None:
-        return jsonify({"ok": True, "note": "notify_chat_id hali yo'q — hech kim /start bosmagan"})
+    targets = _daily_report_targets()
+    if not targets:
+        return jsonify({
+            "ok": True,
+            "note": "Hisobot yuboriladigan chat yo'q — TELEGRAM_AGENTS_GROUP_ID/"
+                    "TELEGRAM_REPORT_GROUP_ID sozlanmagan va hech kim /start bosmagan.",
+        })
 
     try:
+        # Kechagi holat bilan solishtirish `orchestrator.gather_data()` ichida
+        # avtomatik amalga oshadi (KV'da saqlangan oldingi kun snapshoti orqali).
         report = orchestrator.run_daily_cron_report(dry_run=False)
     except Exception:
         logger.exception("Kunlik avtomatik tahlil xatosi")
@@ -278,9 +345,11 @@ def cron_daily():
     if report is None:
         return jsonify({"ok": True, "sent": False, "note": "diqqatga loyiq narsa yo'q"})
 
-    save_last_report(chat_id, report)
-    tg_send(chat_id, "🔁 Kunlik avtomatik tahlil:\n\n" + report)
-    return jsonify({"ok": True, "sent": True})
+    text = "🔁 Kunlik tahlil:\n\n" + report
+    for cid in targets:
+        save_last_report(cid, report)
+        tg_send(cid, text)
+    return jsonify({"ok": True, "sent": True, "targets": len(targets)})
 
 
 @app.route("/api/cron/budget", methods=["GET"])

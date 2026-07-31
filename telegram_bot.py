@@ -59,13 +59,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # yuborilishi uchun saqlab qo'yamiz (deposit hali yozilmagan bo'lsa ham).
     budget_tracker.set_notify_chat_id(update.effective_chat.id)
     await update.message.reply_text(
-        "👋 Salom! Men — Target Master.\n\n"
-        "💬 Savol bering — Meta Ads bo'yicha maslahat beraman.\n"
-        "📊 /analyze — hisobingizni tahlil qilib, tavsiyalar beraman "
-        "(Targetolog + Marketolog agentlar ishlaydi).\n"
-        "⏸ /pause <ad_id> — reklamani to'xtatish\n"
-        "▶️ /resume <ad_id> — reklamani qayta ishga tushirish\n"
-        "📋 /status — oxirgi tahlil hisobotini ko'rish\n"
+        "👋 Salom! Men — Targetolog.\n\n"
+        "Men bilan oddiy odam bilan gaplashgandek yozavering — buyruq shart emas, "
+        "tushunaman va o'zim bajaraman.\n\n"
+        "Narx keskin ko'tarilsa yoki target yaxshi natija bermasa, o'zim ko'rib "
+        "byudjetni kamaytiraman yoki auditoriyani o'zgartirib, CPL'ni tushirishga "
+        "harakat qilaman. Qo'limdan to'liq kelmasa, ochiq shunday deb aytaman.\n\n"
+        "Qisqa buyruqlar ham bor:\n"
+        "📊 /analyze — hisobni to'liq tahlil qilaman\n"
+        "📋 /status — oxirgi hisobotni ko'rsataman\n"
+        "⏸ /pause <ad_id>  ▶️ /resume <ad_id>\n"
         "💰 \"bugun 500$ tushdi\" / \"qancha qoldi?\" — byudjet balansini kuzataman, "
         "chegaradan pastga tushsa o'zim xabar beraman.\n"
         "🔁 Har kuni avtomatik tahlil qilib, kerak bo'lmagan narsalarni o'zim "

@@ -29,6 +29,7 @@ import anthropic
 
 import meta_api
 import budget_tracker
+import kv_store
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orchestrator")
@@ -326,19 +327,44 @@ def _call_agent(system_prompt: str, user_content: str) -> dict:
         raise TargetologFormatError(text) from e
 
 
+SNAPSHOT_KV_KEY = "orchestrator_daily_snapshot"
+
+
 def gather_data() -> dict:
-    """Meta API'dan tahlil uchun kerakli barcha ma'lumotni yig'adi."""
+    """Meta API'dan tahlil uchun kerakli barcha ma'lumotni yig'adi.
+
+    Shuningdek, KECHAGI (oldingi chaqiruvdagi) kampaniya darajasidagi
+    statistikani ham qo'shib beradi ("previous_snapshot") — shu orqali
+    Targetolog "kecha CPA $9 edi, bugun $14 ga chiqdi" kabi HAQIQIY
+    solishtirishga asoslanib xulosa chiqara oladi, taxmin qilmaydi. Joriy
+    holat esa ertangi solishtirish uchun KV'ga saqlanadi."""
     account_structure = meta_api.get_account_structure()
     ad_insights = meta_api.get_insights(level="ad", date_preset="last_7d")
     region_breakdown = meta_api.get_insights(
         level="ad", date_preset="last_7d", breakdowns=["region"]
     )
+    campaign_insights_today = meta_api.get_insights(level="campaign", date_preset="yesterday")
+
+    previous_snapshot = kv_store.get_json(SNAPSHOT_KV_KEY, default=None)
+    kv_store.set_json(SNAPSHOT_KV_KEY, {
+        "date": datetime.utcnow().date().isoformat(),
+        "campaign_insights": campaign_insights_today,
+    })
+
     return {
         "account_structure": account_structure,
         "ad_insights": ad_insights,
         "region_breakdown": region_breakdown,
         "business_rules": BUSINESS_RULES,
         "generated_at": datetime.utcnow().isoformat(),
+        "yesterday_campaign_insights": campaign_insights_today,
+        "previous_day_snapshot_for_comparison": previous_snapshot,
+        "comparison_instruction": (
+            "'previous_day_snapshot_for_comparison' — avvalgi marta saqlangan "
+            "kunlik holat (agar mavjud bo'lsa). Shu bilan 'yesterday_campaign_insights'ni "
+            "solishtirib, narx/CPA/CPL keskin o'zgargan joylarni summary'da aniq ayting "
+            "(masalan 'CPA kecha $9 edi, bugun $14 — 55% oshdi')."
+        ),
     }
 
 

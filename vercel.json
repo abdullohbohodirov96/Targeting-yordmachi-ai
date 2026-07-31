@@ -6,6 +6,9 @@
     { "path": "/api/cron/daily", "schedule": "0 8 * * *" }
   ],
   "functions": {
-    "api/index.py": { "maxDuration": 60 }
+    "api/index.py": {
+      "maxDuration": 60,
+      "includeFiles": "{*.py,*.md,*.json,agents/**}"
+    }
   }
 }

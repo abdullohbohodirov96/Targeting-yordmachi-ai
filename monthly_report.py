@@ -22,10 +22,36 @@ ARZONROQ (API chaqiruvi shart emas), ham ANIQROQ.
 import io
 import re
 import calendar
+from pathlib import Path
 from datetime import date, datetime, timedelta
 
 import meta_api
 import budget_tracker
+
+# MUHIM (bug fix): reportlab'ning standart shriftlari (Helvetica va h.k.)
+# FAQAT Lotin-1 belgilarini qo'llab-quvvatlaydi -- kampaniya nomlarida
+# Kirill harflari bo'lsa (masalan Meta o'zi avtomatik qo'shadigan "- Копия"
+# -- "nusxa" so'zi rus tilida, kampaniyani dublikat qilganda paydo bo'ladi),
+# bu belgilar QORA TO'RTBURCHAK (ko'rinmaydigan/noto'g'ri glif) bo'lib
+# chiqib, kampaniya nomini o'qib bo'lmaydigan qilib qo'yardi (foydalanuvchi
+# skrinshot bilan ko'rsatgan). Shuning uchun bu yerda Kirill+Lotin+ko'p
+# tilni qo'llab-quvvatlaydigan DejaVu Sans shrifti ro'yxatdan o'tkaziladi va
+# BUTUN hujjatda ishlatiladi.
+_FONTS_DIR = Path(__file__).parent / "fonts"
+FONT_REGULAR = "Helvetica"
+FONT_BOLD = "Helvetica-Bold"
+try:
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    pdfmetrics.registerFont(TTFont("DejaVuSans", str(_FONTS_DIR / "DejaVuSans.ttf")))
+    pdfmetrics.registerFont(TTFont("DejaVuSans-Bold", str(_FONTS_DIR / "DejaVuSans-Bold.ttf")))
+    FONT_REGULAR = "DejaVuSans"
+    FONT_BOLD = "DejaVuSans-Bold"
+except Exception:
+    # Shrift fayli topilmasa (masalan mahalliy sinovda), standart
+    # Helvetica'ga tushib qoladi -- Kirill matn noto'g'ri chiqishi mumkin,
+    # lekin dastur to'xtab qolmaydi.
+    pass
 
 _UZ_MONTHS = {
     "yanvar": 1, "fevral": 2, "mart": 3, "aprel": 4, "may": 5, "iyun": 6,
@@ -52,7 +78,12 @@ _MONTH_REFERENCE = re.compile(
     + "|".join(_UZ_MONTHS.keys()),
     re.IGNORECASE,
 )
-_REPORT_REFERENCE = re.compile(r"hisobot|pdf|report", re.IGNORECASE)
+# MUHIM (bug fix): "hisobot" so'zini QOTIB QOLGAN holda emas, TYPO'GA
+# CHIDAMLI qidiramiz -- foydalanuvchi tez-tez "hisbotini" (bitta harf
+# tushib qolgan), "hisobotni", "hisoboti" kabi ko'p xil shaklda yozadi.
+# "his" + (ixtiyoriy harflar) + "bot" + (ixtiyoriy harflar) naqshi
+# barcha shu variantlarni qamrab oladi.
+_REPORT_REFERENCE = re.compile(r"his\w*bot\w*|pdf|report", re.IGNORECASE)
 
 
 def is_monthly_report_request(user_text: str) -> bool:
@@ -242,12 +273,16 @@ def _aggregate(campaigns: list[dict]) -> dict:
     spend = sum(c["spend"] for c in campaigns)
     results = sum(c["results"] for c in campaigns)
     # Yo'nalish turi bo'yicha ajratilgan jamlanma -- masalan
-    # {"Lead": 12, "Xabar": 3, "Profil tashrif": 40} -- turli maqsadli
-    # kampaniyalarni bitta "natija" raqamiga aralashtirib yubormaslik uchun,
-    # umumiy sondan TASHQARI har bir turni alohida ham ko'rsatish mumkin.
-    by_direction: dict[str, int] = {}
+    # {"Lead": {"spend": 563.64, "results": 269}, "Profil tashrif": {...}}.
+    # MUHIM: foydalanuvchi aniq so'radi -- "leadga umumiy nechpul ketgan,
+    # boshqa turlariga qancha" -- shuning uchun har bir yo'nalish uchun
+    # XARAJAT ham, NATIJA ham alohida hisoblanadi (avval faqat natija
+    # hisoblangan edi, xarajat yo'q edi).
+    by_direction: dict[str, dict] = {}
     for c in campaigns:
-        by_direction[c["direction"]] = by_direction.get(c["direction"], 0) + c["results"]
+        d = by_direction.setdefault(c["direction"], {"spend": 0.0, "results": 0})
+        d["spend"] += c["spend"]
+        d["results"] += c["results"]
     impressions = sum(c["impressions"] for c in campaigns)
     # ESLATMA: Reach kampaniyalar bo'yicha to'g'ridan-to'g'ri qo'shilgan --
     # bu TAXMINIY umumiy qamrov (haqiqiy account-darajasidagi reach'dan farq
@@ -387,6 +422,7 @@ def render_monthly_report_pdf(data: dict) -> bytes:
         font_size = 8 if small else 9.5
         t = Table(rows, colWidths=col_widths, repeatRows=1 if header else 0)
         style = [
+            ("FONTNAME", (0, 0), (-1, -1), FONT_REGULAR),
             ("FONTSIZE", (0, 0), (-1, -1), font_size),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#CCCCCC")),
@@ -398,7 +434,7 @@ def render_monthly_report_pdf(data: dict) -> bytes:
             style += [
                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2E4053")),
                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                ("FONTNAME", (0, 0), (-1, 0), FONT_BOLD),
             ]
         t.setStyle(TableStyle(style))
         return t
@@ -409,9 +445,9 @@ def render_monthly_report_pdf(data: dict) -> bytes:
         topMargin=1.4 * cm, bottomMargin=1.4 * cm, leftMargin=1.4 * cm, rightMargin=1.4 * cm,
     )
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("TitleUZ", parent=styles["Title"], fontSize=18, spaceAfter=4)
-    subtitle_style = ParagraphStyle("SubUZ", parent=styles["Normal"], fontSize=10, textColor=colors.HexColor("#555555"))
-    h2 = ParagraphStyle("H2UZ", parent=styles["Heading2"], fontSize=13, spaceBefore=16, spaceAfter=6, textColor=colors.HexColor("#2E4053"))
+    title_style = ParagraphStyle("TitleUZ", parent=styles["Title"], fontName=FONT_BOLD, fontSize=18, spaceAfter=4)
+    subtitle_style = ParagraphStyle("SubUZ", parent=styles["Normal"], fontName=FONT_REGULAR, fontSize=10, textColor=colors.HexColor("#555555"))
+    h2 = ParagraphStyle("H2UZ", parent=styles["Heading2"], fontName=FONT_BOLD, fontSize=13, spaceBefore=16, spaceAfter=6, textColor=colors.HexColor("#2E4053"))
 
     elements = [
         Paragraph("OYLIK TARGET HISOBOTI", title_style),
@@ -428,19 +464,27 @@ def render_monthly_report_pdf(data: dict) -> bytes:
     summary_rows = [
         ["Umumiy xarajat", _fmt_money(t["spend"])],
         ["Umumiy natija (barcha turlar)", str(t["results"])],
-    ]
-    # Har bir yo'nalish turi (Lead/Xabar/Profil tashrif/Sotuv/...) bo'yicha
-    # alohida qator -- turli maqsadli kampaniyalarni bitta "natija"ga
-    # aralashtirmasdan, ANIQ qaysi turdan qancha kelganini ko'rsatish uchun.
-    for direction, count in sorted(t["by_direction"].items(), key=lambda kv: kv[1], reverse=True):
-        summary_rows.append([f"   shundan {direction}", str(count)])
-    summary_rows += [
         ["O'rtacha CPL", _fmt_money(t["cpl"])],
         ["Umumiy ko'rishlar (Impressions)", _fmt_int(t["impressions"])],
         ["Umumiy qamrov (Reach, taxminiy*)", _fmt_int(t["reach"])],
     ]
     elements.append(Paragraph("Umumiy oy xulosasi", h2))
     elements.append(make_table(summary_rows, col_widths=[9 * cm, 6 * cm]))
+
+    # 1b) Yo'nalish bo'yicha xarajat taqsimoti -- foydalanuvchi ANIQ so'radi:
+    # "leadga umumiy nechpul ketgan, boshqasiga boshqa turlariga qancha".
+    # Bu jadval har bir yo'nalish turi (Lead/Xabar/Profil tashrif/Sotuv/
+    # Noma'lum) uchun XARAJAT va NATIJA ikkalasini ham alohida ko'rsatadi --
+    # turli maqsadli kampaniyalarni bitta raqamga aralashtirmasdan.
+    if t["by_direction"]:
+        elements.append(Paragraph("Yo'nalish bo'yicha xarajat taqsimoti", h2))
+        direction_rows = [["Yo'nalish", "Xarajat", "Natija", "O'rtacha narx"]]
+        for direction, d in sorted(t["by_direction"].items(), key=lambda kv: kv[1]["spend"], reverse=True):
+            avg_price = (d["spend"] / d["results"]) if d["results"] else None
+            direction_rows.append([
+                direction, _fmt_money(d["spend"]), str(d["results"]), _fmt_money(avg_price),
+            ])
+        elements.append(make_table(direction_rows, col_widths=[4.5 * cm, 3.5 * cm, 3.5 * cm, 3.5 * cm], header=True))
 
     # 2) Oldingi davr bilan solishtirish
     if data["prev_totals"]:
@@ -506,7 +550,7 @@ def render_monthly_report_pdf(data: dict) -> bytes:
     elements.append(Paragraph(
         "* Qamrov (Reach) kampaniyalar bo'yicha qo'shib chiqilgan -- bir xil odam bir nechta "
         "kampaniyada ko'rgan bo'lishi mumkin, shuning uchun bu taxminiy umumiy son.",
-        ParagraphStyle("FootUZ", parent=styles["Normal"], fontSize=7.5, textColor=colors.HexColor("#888888")),
+        ParagraphStyle("FootUZ", parent=styles["Normal"], fontName=FONT_REGULAR, fontSize=7.5, textColor=colors.HexColor("#888888")),
     ))
 
     doc.build(elements)

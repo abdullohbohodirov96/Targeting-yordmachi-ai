@@ -719,11 +719,20 @@ def classify_intent(
             "javoban berilgan qo'shimcha ma'lumot (byudjet raqami, shahar nomi). Foydalanuvchi "
             "kampaniya/adset nomini o'z uslubida yozishi mumkin (masalan \"AB | Traffic | IG\", "
             "qisqartmalar, \" | \" bilan ajratilgan nomlar) -- bu ham ACTION, GENERAL emas.\n"
-            "METRIC -- agar haqiqiy hisobdagi aniq raqam/metrika so'ralayotgan bo'lsa "
-            "(masalan: 'video necha kishi ko'rgan', 'CPA qancha', 'necha % odam 15 "
-            "soniyani ko'rgan', 'bugungi xarajat qancha').\n"
-            "GENERAL -- agar bu shunchaki umumiy savol/maslahat so'rovi bo'lsa (hisobga "
-            "tegishli aniq raqam so'ralmagan)."
+            "METRIC -- agar haqiqiy hisobdagi JORIY raqam/statistika so'ralayotgan bo'lsa. "
+            "Bunga ikki xil so'rov kiradi: (1) ANIQ bitta ko'rsatkich (masalan 'video necha "
+            "kishi ko'rgan', 'CPA qancha', 'necha % odam 15 soniyani ko'rgan'), VA (2) "
+            "aniq ko'rsatkich nomi aytilmagan, lekin foydalanuvchi hisobning JORIY holati/"
+            "raqamlarini so'rayotgan umumiy so'rovlar -- masalan 'target ma'lumot ber', "
+            "'bugungi ma'lumotlarni ber', 'hisobot ber', 'statistika ko'rsat', 'necha lead "
+            "keldi', 'bugun qanday ketyapti' kabi. Bunday umumiy so'rovlarda ham javob "
+            "REAL Meta ma'lumotidan (lead soni, xarajat, CPL va h.k.) tuzilishi kerak -- "
+            "GENERAL emas, chunki foydalanuvchi maslahat emas, HAQIQIY raqam kutmoqda.\n"
+            "GENERAL -- FAQAT hisobning joriy holati/raqamlari SO'RALMAGAN, sof bilim/"
+            "maslahat savoli bo'lsa (masalan 'CBO nima', 'byudjetni qachon oshirish kerak', "
+            "'yaxshi kreativ qanday bo'ladi'). Agar xabarda 'ma'lumot', 'hisobot', 'statistika', "
+            "'bugungi holat' kabi so'zlar hisobga nisbatan ishlatilgan bo'lsa -- bu GENERAL "
+            "EMAS, METRIC (yuqoriga qarang)."
         ),
         f"{history_text}\n\nYangi xabar: {user_text}",
         max_tokens=20,
@@ -880,15 +889,25 @@ def _run_pipeline_command(user_text: str, history_text: str) -> str:
     return text
 
 
+# "Bugun/hozir" so'zlari bo'lsa BUGUNGI kunning o'zi (date_preset="today"),
+# aks holda standart so'nggi 7 kunlik ma'lumot ishlatiladi. Bu aynan
+# "bugungi ma'lumotlarni ber" kabi so'rovlarga TO'G'RI davr uchun (7 kun
+# emas, faqat bugun) real raqam qaytarish uchun muhim.
+_TODAY_KEYWORDS = re.compile(r"bugun|hozir|shu kun", re.IGNORECASE)
+
+
 def answer_data_question(user_text: str, history_text: str = "") -> str:
-    """Foydalanuvchi hisobdagi aniq metrika/raqamni so'raganda (masalan: 'video
-    necha kishi ko'rgan', 'necha % odam 15 soniyani ko'rgan', 'CPA qancha')
-    chaqiriladi. Meta API'dan (video metrikalari bilan birga) real ma'lumotni
-    tortib, Targetolog'ga faqat SHU raqamlar asosida — o'ylab topmasdan — javob
-    berishni buyuradi. Bu action emas, faqat hisobot, shuning uchun Marketolog
-    tekshiruvidan o'tmaydi (hisobga hech narsa o'zgartirilmaydi)."""
+    """Foydalanuvchi hisobdagi aniq metrika/raqamni yoki umumiy joriy holatni
+    so'raganda (masalan: 'video necha kishi ko'rgan', 'CPA qancha', 'bugungi
+    ma'lumotlarni ber', 'necha lead keldi') chaqiriladi. Meta API'dan (video
+    metrikalari bilan birga) real ma'lumotni tortib, faqat SHU raqamlar
+    asosida — o'ylab topmasdan — javob beradi. Bu action emas, faqat
+    hisobot, shuning uchun Marketolog tekshiruvidan o'tmaydi (hisobga hech
+    narsa o'zgartirilmaydi)."""
+    date_preset = "today" if _TODAY_KEYWORDS.search(user_text) else "last_7d"
+    period_label = "BUGUNGI kun" if date_preset == "today" else "so'nggi 7 kun"
     try:
-        report_data = meta_api.get_full_report(level="ad", date_preset="last_7d")
+        report_data = meta_api.get_full_report(level="ad", date_preset=date_preset)
     except meta_api.MetaAPIError as e:
         return f"⚠️ Meta API'dan ma'lumot olishda xatolik: {e}"
 
@@ -896,13 +915,20 @@ def answer_data_question(user_text: str, history_text: str = "") -> str:
     data_qa_system = (
         f"{TARGETOLOG_ROLE}\n\n---\n\n# BILIM BAZASI\n\n{KNOWLEDGE_BASE}\n\n---\n\n"
         "MUHIM: Bu safar sendan action_plan JSON EMAS, oddiy o'zbekcha matn "
-        "javob kutilyapti. Foydalanuvchi hisobdagi aniq metrika/raqamni "
-        "so'ramoqda. Faqat senga berilgan haqiqiy `insights` ma'lumotlaridan "
-        "foydalanib javob ber (masalan foiz hisoblash: "
-        "video_thruplay_watched_actions / video_play_actions * 100). Agar "
-        "kerakli maydon ma'lumotda yo'q bo'lsa, buni ochiq ayt, o'ylab topma. "
-        "Javobni Telegram uchun qisqa va tushunarli qil, kerak bo'lsa ad/adset "
-        "nomlari bo'yicha alohida ko'rsat."
+        "javob kutilyapti. Foydalanuvchi hisobdagi aniq metrika/raqamni YOKI "
+        "umumiy joriy holatni (masalan 'ma'lumot ber', 'hisobot ber') "
+        f"so'ramoqda. Senga berilgan ma'lumot {period_label}ga tegishli -- "
+        "javobingda buni aniq ayt (masalan 'Bugun ...' yoki 'So'nggi 7 kunda ...'). "
+        "Faqat senga berilgan haqiqiy `insights` ma'lumotlaridan foydalanib javob "
+        "ber (masalan foiz hisoblash: video_thruplay_watched_actions / "
+        "video_play_actions * 100; lead soni odatda `actions` ichida "
+        "action_type='lead' yoki 'onsite_conversion.lead_grouped' kabi nomlar "
+        "bilan keladi -- shulardan yig'ib ber). Agar foydalanuvchi 'hammasini "
+        "ber' desa, kamida: lead/natija soni, xarajat (spend), va CPL/CPA "
+        "(spend / lead soni) ni albatta qo'sh. Agar kerakli maydon ma'lumotda "
+        "umuman yo'q bo'lsa (masalan SMS alohida kuzatilmasa), buni ochiq "
+        "ayt, o'ylab topma. Javobni Telegram uchun qisqa va tushunarli qil, "
+        "kerak bo'lsa ad/adset nomlari bo'yicha alohida ko'rsat."
     )
     answer = call_light(
         data_qa_system,

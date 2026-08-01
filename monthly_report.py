@@ -353,16 +353,37 @@ def compute_campaigns_and_totals(**insight_kwargs) -> tuple[list[dict], dict]:
 def gather_monthly_report_data(since: str, until: str, period_label: str) -> dict:
     """Berilgan davr (since/until, YYYY-MM-DD) uchun barcha kerakli
     ma'lumotni yig'adi va deterministik hisoblaydi: har bir kampaniya
-    natijasi, umumiy jamlanma, oldingi (bir xil uzunlikdagi) davr bilan
-    solishtirish, kunlik jadval, va joriy byudjet holati. Hammasi HAQIQIY
-    Meta API ma'lumotidan -- hech narsa o'ylab topilmaydi."""
+    natijasi, umumiy jamlanma, oldingi davr bilan solishtirish, kunlik
+    jadval, va joriy byudjet holati. Hammasi HAQIQIY Meta API
+    ma'lumotidan -- hech narsa o'ylab topilmaydi, hech qanday sinov/soxta
+    son ishlatilmaydi."""
     campaigns, totals = compute_campaigns_and_totals(time_range={"since": since, "until": until})
 
     since_dt = datetime.strptime(since, "%Y-%m-%d").date()
     until_dt = datetime.strptime(until, "%Y-%m-%d").date()
-    span_days = (until_dt - since_dt).days + 1
-    prev_until_dt = since_dt - timedelta(days=1)
-    prev_since_dt = prev_until_dt - timedelta(days=span_days - 1)
+
+    # MUHIM (bug fix): agar so'ralgan davr TO'LIQ TAQVIM OYI bo'lsa
+    # (masalan 1-31 iyul), "oldingi davr" ham TO'LIQ OLDINGI OY bo'lishi
+    # kerak (1-30 iyun) -- "iyul bilan iyunni solishtir" deb aniq
+    # so'ralgan. Avvalgi kod har doim "bir xil kunlar soni orqaga"
+    # hisoblardi (span_days asosida) -- bu oylar turli uzunlikda bo'lgani
+    # uchun (iyul=31 kun, iyun=30 kun) "31 may -- 30 iyun" kabi NOTO'G'RI,
+    # chalkash oraliqqa olib kelardi. Endi taqvim oyi bo'lsa aniq oldingi
+    # OYNING o'zi, aks holda (masalan "joriy oy" yoki aniq sana oralig'i)
+    # avvalgidek bir xil uzunlikdagi oldingi davr ishlatiladi.
+    is_full_calendar_month = (
+        since_dt.day == 1 and until_dt == date(since_dt.year, since_dt.month, calendar.monthrange(since_dt.year, since_dt.month)[1])
+    )
+    if is_full_calendar_month:
+        prev_month_year, prev_month = since_dt.year, since_dt.month - 1
+        if prev_month == 0:
+            prev_month, prev_month_year = 12, prev_month_year - 1
+        prev_since_dt = date(prev_month_year, prev_month, 1)
+        prev_until_dt = date(prev_month_year, prev_month, calendar.monthrange(prev_month_year, prev_month)[1])
+    else:
+        span_days = (until_dt - since_dt).days + 1
+        prev_until_dt = since_dt - timedelta(days=1)
+        prev_since_dt = prev_until_dt - timedelta(days=span_days - 1)
 
     prev_totals = None
     try:
@@ -490,17 +511,28 @@ def render_monthly_report_pdf(data: dict) -> bytes:
     if data["prev_totals"]:
         pt = data["prev_totals"]
         elements.append(Paragraph(f"Oldingi davr bilan solishtirish ({data['prev_period_label']})", h2))
-        elements.append(make_table([
+        comparison_rows = [
             ["Ko'rsatkich", "Bu davr", "Oldingi davr", "O'zgarish"],
             ["Xarajat", _fmt_money(t["spend"]), _fmt_money(pt["spend"]), _pct_change(t["spend"], pt["spend"])],
-            ["Natija", str(t["results"]), str(pt["results"]), _pct_change(t["results"], pt["results"])],
-            [
-                "CPL",
-                _fmt_money(t["cpl"]),
-                _fmt_money(pt["cpl"]),
-                _pct_change(t["cpl"], pt["cpl"]) if (t["cpl"] and pt["cpl"]) else "-",
-            ],
-        ], col_widths=[4 * cm, 3.7 * cm, 3.7 * cm, 3.6 * cm], header=True))
+            ["Natija (barcha turlar)", str(t["results"]), str(pt["results"]), _pct_change(t["results"], pt["results"])],
+        ]
+        # MUHIM: foydalanuvchi aniq so'radi -- "oldingi oyda nechta lead,
+        # nechta SMS, hammasini ko'rsatsin". Shuning uchun umumiy Natija
+        # qatoridan TASHQARI, har bir yo'nalish turi (Lead/Xabar/Profil
+        # tashrif/Sotuv) uchun ALOHIDA solishtirish qatori ham qo'shiladi --
+        # ikkala davrda ham uchragan BARCHA turlar bo'yicha.
+        all_directions = set(t["by_direction"].keys()) | set(pt["by_direction"].keys())
+        for direction in sorted(all_directions, key=lambda d: t["by_direction"].get(d, {}).get("results", 0), reverse=True):
+            cur = t["by_direction"].get(direction, {"results": 0})["results"]
+            prev = pt["by_direction"].get(direction, {"results": 0})["results"]
+            comparison_rows.append([f"   shundan {direction}", str(cur), str(prev), _pct_change(cur, prev)])
+        comparison_rows.append([
+            "CPL",
+            _fmt_money(t["cpl"]),
+            _fmt_money(pt["cpl"]),
+            _pct_change(t["cpl"], pt["cpl"]) if (t["cpl"] and pt["cpl"]) else "-",
+        ])
+        elements.append(make_table(comparison_rows, col_widths=[4.5 * cm, 3.3 * cm, 3.3 * cm, 3.4 * cm], header=True))
 
     # 3) Byudjet monitoring
     if data["budget_status"]:

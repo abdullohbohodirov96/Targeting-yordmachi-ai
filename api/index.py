@@ -219,7 +219,7 @@ def _self_base_url() -> str:
     return host
 
 
-def _trigger_async_processing(payload: dict) -> bool:
+def _trigger_async_processing(payload: dict) -> tuple[bool, str]:
     """`/api/process-action`ga ICHKI so'rov yuboradi va JAVOBNI ATAYLAB
     KUTMAYDI (juda qisqa timeout).
 
@@ -232,20 +232,14 @@ def _trigger_async_processing(payload: dict) -> bool:
     Telegram'ga DARHOL 200 OK qaytarib, hech qachon Vercel'ning
     FUNCTION_INVOCATION_TIMEOUT xatosiga urilib qolmaydi.
 
-    MUHIM (ilgari shu yerda XATOLIK bor edi -- botning "target tahlil"ga
-    umuman javob bermay qolishiga sababchi bo'lgan): agar `CRON_SECRET`
-    Vercel'da sozlanmagan bo'lsa yoki ichki so'rov 401/xato status bilan
-    JUDA TEZ qaytsa (timeout bo'lmasdan), avvalgi versiya buni "muvaffaqiyatli
-    yuborildi" deb noto'g'ri hisoblardi -- natijada foydalanuvchi "Qabul
-    qildim" xabarini olardi-yu, natija HECH QACHON kelmasdi (chunki
-    `/api/process-action` ichkariga umuman kirmay, 401 bilan darhol rad
-    etardi). Endi status kodi ANIQ tekshiriladi va CRON_SECRET yo'qligi
-    OLDINDAN aniqlanadi -- shu holatlarda `False` qaytariladi, chaqiruvchi
-    esa (`handle_free_text`) buni ko'rib ISHNI SHU YERNING O'ZIDA (sinxron)
-    bajarishga qaytadi -- hech qachon "jim qolib ketish" bo'lmasligi uchun."""
+    Qaytaradi: `(muvaffaqiyatmi, sabab)` -- `sabab` diagnostika uchun (agar
+    muvaffaqiyatsiz bo'lsa, foydalanuvchiga ham ko'rsatiladi -- Vercel
+    dashboard'ga kirmasdan to'g'ridan-to'g'ri Telegram'da nima xato
+    bo'lganini ko'rish uchun)."""
     if not CRON_SECRET:
-        logger.error("CRON_SECRET sozlanmagan -- fon so'rov ishga tushirilmaydi, sinxron rejimga qaytiladi")
-        return False
+        reason = "CRON_SECRET Vercel'da sozlanmagan"
+        logger.error(reason)
+        return False, reason
 
     import requests
     url = f"{_self_base_url()}/api/process-action"
@@ -257,16 +251,18 @@ def _trigger_async_processing(payload: dict) -> bool:
             timeout=0.5,
         )
         if 200 <= resp.status_code < 300:
-            return True
-        logger.error("Fon so'rovi kutilmagan status bilan qaytdi: %s %s", resp.status_code, resp.text[:300])
-        return False
+            return True, "ok"
+        reason = f"ichki so'rov {url} manzilidan {resp.status_code} qaytardi: {resp.text[:200]!r}"
+        logger.error("Fon so'rovi kutilmagan status bilan qaytdi: %s", reason)
+        return False, reason
     except requests.exceptions.Timeout:
         # KUTILGAN holat: so'rov haqiqatan yuborildi, biz shunchaki javobni
         # kutmadik -- fon ishga tushirish muvaffaqiyatli hisoblanadi.
-        return True
-    except requests.exceptions.RequestException:
+        return True, "ok (timeout, kutilgan)"
+    except requests.exceptions.RequestException as e:
+        reason = f"{url} manzilga ulanib bo'lmadi: {type(e).__name__}: {e}"
         logger.exception("Fon so'rovini yuborib bo'lmadi")
-        return False
+        return False, reason
 
 
 def handle_free_text(chat_id: int, user_text: str) -> None:
@@ -294,7 +290,7 @@ def handle_free_text(chat_id: int, user_text: str) -> None:
         tg_delete(chat_id, status_id)
         history.append({"role": "user", "content": user_text})
         save_history(chat_id, history)
-        dispatched = _trigger_async_processing({
+        dispatched, reason = _trigger_async_processing({
             "chat_id": chat_id,
             "user_text": user_text,
             "history_text": history_text,
@@ -308,15 +304,17 @@ def handle_free_text(chat_id: int, user_text: str) -> None:
             )
             return
 
-        # MUHIM: fon so'rovi ishga tushmadi (masalan CRON_SECRET sozlanmagan
-        # yoki ichki so'rov xato qaytardi) -- bu holatda AVVALGI (sinxron)
+        # MUHIM: fon so'rovi ishga tushmadi -- bu holatda AVVALGI (sinxron)
         # usulga qaytamiz, hech qachon foydalanuvchini JAVOBSIZ qoldirmaslik
         # uchun. Bu Vercel'ning 60 soniyalik limitiga urilib qolish xavfini
         # qaytaradi (murakkab buyruqlarda), lekin "umuman javob kelmaslik"dan
         # ancha yaxshi -- va aksariyat holatda (oddiyroq buyruqlar) baribir
-        # vaqtida tugaydi.
-        logger.warning("Fon so'rov ishlamadi -- %s buyrug'i sinxron rejimda bajarilyapti", verdict)
-        tg_send(chat_id, "⏳ Fon rejimi hozircha sozlanmagan, shu yerning o'zida bajarayapman...")
+        # vaqtida tugaydi. Sababni ('reason') ATAYLAB Telegram'ga ham
+        # chiqaramiz -- shunda foydalanuvchi Vercel dashboard/loglarga
+        # kirmasdan, to'g'ridan-to'g'ri shu yerdan nima xato bo'lganini
+        # ko'rib, kerak bo'lsa dasturchiga (yoki bizga) ko'rsatishi mumkin.
+        logger.warning("Fon so'rov ishlamadi (%s) -- %s buyrug'i sinxron rejimda bajarilyapti", reason, verdict)
+        tg_send(chat_id, f"⏳ Fon rejimi hozircha ishlamadi ({reason}), shu yerning o'zida bajarayapman...")
         try:
             command_result = orchestrator.execute_intent(verdict, user_text, history_text, chat_id)
         except Exception as e:

@@ -32,6 +32,7 @@ import requests
 import meta_api
 import budget_tracker
 import kv_store
+import monthly_report
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("orchestrator")
@@ -947,20 +948,6 @@ def _resolve_query_period(user_text: str) -> tuple[dict, str]:
     return {"date_preset": "last_7d"}, label
 
 
-ADMIN_REPORT_BODY_TEMPLATE = (
-    "\U0001F4B0 Xarajat: $<son>\n"
-    "\U0001F4E9 Leadlar: <son>\n"
-    "\U0001F4AC Xabarlar: <son>\n"
-    "\U0001F3AF CPL: $<son>\n"
-    "\U0001F4C8 CTR: <son>%\n"
-    "\U0001F4F1 CPC: $<son>\n"
-    "\U0001F4F6 CPM: $<son>\n"
-    "\U0001F441 Impressions: <son>\n"
-    "\U0001F4CD Reach: <son>\n"
-    "\U0001F504 Frequency: <son>"
-)
-
-
 def _admin_report_header(period_label: str, hisobot_vaqti: str, subtitle: str) -> str:
     return (
         "\U0001F4CA ADMIN TARGET HISOBOTI\n\n"
@@ -979,84 +966,79 @@ def build_admin_report(
 ) -> str:
     """"ADMIN TARGET HISOBOTI" qat'iy formatidagi hisobotni quradi (kunlik
     09:00 cron VA oddiy "ma'lumot/hisobot ber" so'rovlari -- IKKALASI HAM shu
-    bir xil ko'rinishda javob berishi uchun, foydalanuvchi so'ragan tarzda).
-    Sarlavha/sana/vaqt qismini biz o'zimiz (deterministik, LLM'siz) yozamiz --
-    faqat sonli ko'rsatkichlar (xarajat/lead/CPL va h.k.) va eng yaxshi/yomon
-    kampaniya nomi OpenAI orqali, FAQAT haqiqiy Meta ma'lumotidan hisoblanadi."""
+    bir xil ko'rinishda javob berishi uchun). Sarlavha/sana/vaqt qismini biz
+    o'zimiz (deterministik) yozamiz.
+
+    MUHIM (bug fix, ikkinchi marta): bu funksiya AVVAL raqamlarni OpenAI'ga
+    hisoblatgan edi -- va bu ikki marta xato chiqargan: (1) bitta leadni 3
+    marta hisoblab "Leadlar: 3" deb chiqargan, (2) HAR BIR kampaniyaga
+    majburan "lead" deb yorliq yopishtirgan, shuning uchun Traffic/SMS/
+    boshqa maqsadli kampaniyalar (masalan "AB | Traffic | IG", $110.30
+    xarajat) doim "0 lead" bo'lib noto'g'ri ko'rsatilgan (foydalanuvchi
+    skrinshot bilan ko'rsatgan). Endi bu funksiya `monthly_report.py`dagi
+    BIR XIL ishonchli, 100% DETERMINISTIK (LLM'siz) dvigatel bilan ishlaydi
+    -- har bir kampaniyaning HAQIQIY maqsadi (Lead/Xabar/Profil tashrif/
+    Sotuv/Noma'lum) nomi/`objective`sidan aniqlanadi, mos natija turi
+    ko'rsatiladi -- boshqa turdagi kampaniyaga "lead" yorlig'i yopishtirilmaydi."""
     insight_kwargs = insight_kwargs or {"date_preset": "today"}
     header = _admin_report_header(period_label, hisobot_vaqti, subtitle)
     try:
         account_rows = meta_api.get_insights(level="account", fields=meta_api.DEFAULT_FIELDS, **insight_kwargs)
-        campaign_rows = meta_api.get_full_report(level="campaign", **insight_kwargs)
+        campaigns, _totals = monthly_report.compute_campaigns_and_totals(**insight_kwargs)
     except meta_api.MetaAPIError as e:
         return header + f"\u26A0\uFE0F Meta API'dan ma'lumot olishda xatolik: {e}"
 
-    account_json = json.dumps(account_rows, ensure_ascii=False, indent=2)
-    campaign_json = json.dumps(campaign_rows, ensure_ascii=False, indent=2)
+    account_row = account_rows[0] if account_rows else {}
+    spend = monthly_report._safe_float(account_row.get("spend"))
+    actions = account_row.get("actions") or []
+    leads = monthly_report._first_matching_action_value(actions, monthly_report.LEAD_ACTION_PRIORITY, "lead")
+    messages = monthly_report._first_matching_action_value(actions, monthly_report.MESSAGE_ACTION_PRIORITY, "messag")
+    results = leads + messages
+    cpl = (spend / results) if results else None
+    impressions = int(monthly_report._safe_float(account_row.get("impressions")))
+    reach = int(monthly_report._safe_float(account_row.get("reach")))
+    ctr = monthly_report._safe_float(account_row.get("ctr"))
+    cpc = monthly_report._safe_float(account_row.get("cpc"))
+    cpm = monthly_report._safe_float(account_row.get("cpm"))
+    frequency = monthly_report._safe_float(account_row.get("frequency"))
 
-    system_prompt = (
-        "Senga hisobning HAQIQIY Meta Ads statistikasi beriladi (account "
-        "darajasida umumiy va har bir kampaniya darajasida alohida). Vazifang: "
-        "FAQAT quyidagi qatorlarni, AYNAN shu tartibda va shu formatda "
-        "to'ldirib qaytarish -- boshqa hech qanday so'z, izoh, sarlavha "
-        "QO'SHMA (sarlavhani men o'zim qo'shaman):\n\n"
-        + ADMIN_REPORT_BODY_TEMPLATE +
-        "\n\nQoidalar: barcha sonlar FAQAT pastda berilgan HAQIQIY "
-        "ma'lumotdan hisoblanishi kerak, hech narsani o'ylab topma. Xarajat = "
-        "account darajasidagi 'spend'.\n\n"
-        "MUHIM (Leadlar) -- Meta ko'pincha BITTA XIL lead voqeasini "
-        "actions ichida BIR NECHTA turli action_type nomi bilan qayta-qayta "
-        "ko'rsatadi (masalan 'lead', 'onsite_conversion.lead_grouped', "
-        "'offsite_conversion.fb_pixel_lead' -- bular ko'pincha BIR XIL "
-        "leadni anglatadi, HAR XILI EMAS). SHUNING UCHUN ularning "
-        "'value'larini HECH QACHON bir-biriga QO'SHMA (qo'shsang lead soni "
-        "sun'iy ravishda 2-3 baravar oshib ketadi). Buning o'rniga FAQAT "
-        "BITTA action_type'dan foydalan -- quyidagi tartib bo'yicha ro'yxatda "
-        "birinchi UCHRAGANINI tanla va shuning 'value'sini Leadlar sifatida "
-        "ol: 1) 'onsite_conversion.lead_grouped', 2) 'lead', "
-        "3) 'offsite_conversion.fb_pixel_lead', 4) nomida 'lead' so'zi bor "
-        "boshqa istalgan yozuv. Qolgan lead-o'xshash yozuvlarni butunlay "
-        "e'tiborsiz qoldir.\n\n"
-        "Xabarlar uchun ham XUDDI SHU qoida -- action_type nomida 'messag' "
-        "so'zi bor yozuvlar orasidan HAM faqat BITTASINI (eng mosini, "
-        "masalan 'onsite_conversion.messaging_conversation_started_7d') "
-        "tanla, bir-biriga qo'shma.\n\n"
-        "CPL = Xarajat / Leadlar (Leadlar 0 bo'lsa, CPL o'rniga '-' yoz). "
-        "CTR/CPC/CPM/Impressions/Reach/Frequency = account darajasidagi mos "
-        "maydonlar ('ctr','cpc','cpm','impressions','reach','frequency'). "
-        "Biror maydon topilmasa/bo'sh bo'lsa, 0 yoz -- HECH QACHON "
-        "boshqa metrikadan taxmin qilib chiqarma yoki o'ylab topma "
-        "(masalan Xabarlar uchun mos action_type UMUMAN topilmasa, "
-        "albatta 0 yoz, lead sonidan yoki boshqa narsadan taxmin qilma). "
-        "Pul miqdorini '$' bilan ikkita kasr xonagacha (masalan $4.35), "
-        "foizni bitta kasr xonagacha (masalan 1.34%), Impressions/Reach'ni "
-        "minglik ajratkich bilan (masalan 4 786) yoz.\n\n"
-        "SO'NGRA, bo'sh qator qo'yib, quyidagi sarlavhani yoz:\n"
-        "\U0001F4CB Har bir target natijasi:\n\n"
-        "va HAR BIR alohida FAOL kampaniya uchun (kampaniya darajasidagi "
-        "ma'lumotda nechta kampaniya bo'lsa, shunchasini, kamida 1 tadan "
-        "ko'pi bilan barchasini, HAR BIRINI FAQAT BIR MARTA) quyidagi 2 "
-        "qatorli blokni yoz, bloklar orasida bitta bo'sh qator qoldir:\n\n"
-        "\U0001F539 <kampaniya nomi>\n"
-        "   \U0001F4B0 $<xarajat> | \U0001F4E9 <lead soni> lead | "
-        "\U0001F3AF CPL $<yoki '-'>\n\n"
-        "Har bir kampaniya blokidagi xarajat/lead/CPL ham FAQAT o'sha "
-        "KAMPANIYAGA tegishli ma'lumotdan hisoblanadi (boshqa kampaniyalar "
-        "bilan aralashtirmasdan), va LEAD HISOBLASHDA YUQORIDAGI XUDDI SHU "
-        "qoida (faqat bitta action_type, qo'shmaslik) har bir kampaniya "
-        "uchun ham amal qiladi. Agar kampaniya darajasidagi ma'lumot "
-        "umuman berilmagan/bo'sh bo'lsa, shu o'rniga faqat "
-        "'(faol kampaniya topilmadi)' deb yoz."
-    )
+    body_lines = [
+        f"\U0001F4B0 Xarajat: {monthly_report._fmt_money(spend)}",
+        f"\U0001F4E9 Leadlar: {leads}",
+        f"\U0001F4AC Xabarlar: {messages}",
+        f"\U0001F3AF CPL: {monthly_report._fmt_money(cpl)}",
+        f"\U0001F4C8 CTR: {ctr:.2f}%",
+        f"\U0001F4F1 CPC: {monthly_report._fmt_money(cpc)}",
+        f"\U0001F4F6 CPM: {monthly_report._fmt_money(cpm)}",
+        f"\U0001F441 Impressions: {monthly_report._fmt_int(impressions)}",
+        f"\U0001F4CD Reach: {monthly_report._fmt_int(reach)}",
+        f"\U0001F504 Frequency: {frequency:.2f}",
+        "",
+        "\U0001F4CB Har bir target natijasi:",
+        "",
+    ]
+    if campaigns:
+        blocks = []
+        for c in campaigns:
+            cpl_str = monthly_report._fmt_money(c["cpl"])
+            # MUHIM: "CPL" atamasi faqat Lead uchun to'g'ri -- Traffic/Sotuv/
+            # boshqa yo'nalishlarda "narxi bitta lead uchun" degani NOTO'G'RI
+            # bo'lar edi, shuning uchun bunday hollarda umumiy "Narx" so'zi
+            # ishlatiladi (masalan "Narx: $0.48 (bitta profil tashrif uchun)").
+            price_label = "CPL" if c["direction"] == "Lead" else "Narx"
+            blocks.append(
+                f"\U0001F539 {c['name']} ({c['direction']})\n"
+                f"   \U0001F4B0 {monthly_report._fmt_money(c['spend'])} | "
+                f"\U0001F4CA {c['results']} {c['direction'].lower()} | "
+                f"\U0001F3AF {price_label} {cpl_str}"
+            )
+        body_lines.append("\n\n".join(blocks))
+    else:
+        body_lines.append("(faol kampaniya topilmadi)")
 
-    body = call_light(
-        system_prompt,
-        f"account darajasida umumiy statistika ({period_label}):\n{account_json}\n\n"
-        f"kampaniya darajasida ({period_label}):\n{campaign_json}",
-        max_tokens=350,
-    ).strip()
+    return header + "\n".join(body_lines)
 
-    return header + body
+
 
 
 def _current_tashkent_time() -> tuple[str, str]:

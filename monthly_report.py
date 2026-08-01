@@ -27,26 +27,37 @@ from datetime import date, datetime, timedelta
 import meta_api
 import budget_tracker
 
-# Foydalanuvchi oylik PDF hisobot so'rayotganini ANIQ, LLM'siz (deterministik
-# regex orqali) aniqlash uchun -- bu butun oqim (PDF yaratish, Telegram'ga
-# hujjat sifatida yuborish) boshqa har qanday METRIC/ANALYSIS so'rovidan
-# TUBDAN farq qiladi, shuning uchun classify_intent()ga ishonib o'tirmasdan,
-# eng boshida to'g'ridan-to'g'ri tekshiriladi (api/index.py'da).
-MONTHLY_REPORT_KEYWORDS = re.compile(
-    r"oylik hisobot|bir oylik|oy uchun hisobot|oy bo'yicha hisobot|"
-    r"oylik pdf|pdf.*hisobot|hisobot.*pdf|oylik report|oy hisoboti",
-    re.IGNORECASE,
-)
-
 _UZ_MONTHS = {
     "yanvar": 1, "fevral": 2, "mart": 3, "aprel": 4, "may": 5, "iyun": 6,
     "iyul": 7, "avgust": 8, "sentabr": 9, "sentyabr": 9, "oktabr": 10,
     "noyabr": 11, "dekabr": 12,
 }
 
+# Foydalanuvchi oylik PDF hisobot so'rayotganini ANIQ, LLM'siz (deterministik
+# regex orqali) aniqlash uchun -- bu butun oqim (PDF yaratish, Telegram'ga
+# hujjat sifatida yuborish) boshqa har qanday METRIC/ANALYSIS so'rovidan
+# TUBDAN farq qiladi, shuning uchun classify_intent()ga ishonib o'tirmasdan,
+# eng boshida to'g'ridan-to'g'ri tekshiriladi (api/index.py'da).
+#
+# MUHIM (bug fix): dastlabki versiya faqat "oylik hisobot"/"bir oylik" kabi
+# QOTIB QOLGAN iboralarni tekshirardi -- "iyul oyin hisobotini ber" (oy
+# nomi + so'zlashuv shakli "oyin", "oyi" emas) bunga TO'G'RI KELMADI, shuning
+# uchun so'rov noto'g'ri odatdagi METRIC yo'liga (oxirgi 7 kun kartasi)
+# tushib qoldi. Endi ikkita MUSTAQIL shart tekshiriladi: (1) xabarda "oy"ga
+# ishora bor (oy nomi, "oylik", "oyi/oyin/oyini", "o'tgan/joriy/shu oy") VA
+# (2) xabarda "hisobot"/"pdf"/"report" so'zi bor -- ikkalasi ham alohida-
+# alohida, istalgan tartibda va shaklda uchrasa yetarli.
+_MONTH_REFERENCE = re.compile(
+    r"\boylik\b|o['`]?tgan oy|otgan oy|joriy oy|shu oy|bu oy|\boy(i|in|ini|ning|dagi)?\b|"
+    + "|".join(_UZ_MONTHS.keys()),
+    re.IGNORECASE,
+)
+_REPORT_REFERENCE = re.compile(r"hisobot|pdf|report", re.IGNORECASE)
+
 
 def is_monthly_report_request(user_text: str) -> bool:
-    return bool(MONTHLY_REPORT_KEYWORDS.search(user_text or ""))
+    text = user_text or ""
+    return bool(_MONTH_REFERENCE.search(text) and _REPORT_REFERENCE.search(text))
 
 
 def resolve_monthly_period(user_text: str, today: date | None = None) -> tuple[str, str, str]:
@@ -95,6 +106,61 @@ MESSAGE_ACTION_PRIORITY = [
     "onsite_conversion.total_messaging_connection",
     "onsite_conversion.messaging_first_reply",
 ]
+TRAFFIC_ACTION_PRIORITY = [
+    "landing_page_view",
+    "link_click",
+]
+SALE_ACTION_PRIORITY = [
+    "omni_purchase",
+    "purchase",
+    "offsite_conversion.fb_pixel_purchase",
+]
+APP_INSTALL_ACTION_PRIORITY = [
+    "mobile_app_install",
+    "app_install",
+]
+
+# MUHIM (bug fix): avvalgi versiya HAR BIR kampaniya uchun MAJBURIY "Lead"
+# yoki "Xabar" deb hisoblardi -- shuning uchun Traffic/SMS-boshqa maqsadli
+# kampaniyalar (masalan "AB | Traffic | IG", natijasi profilga tashrif/link
+# bosish, lead EMAS) doim "0 lead" deb noto'g'ri ko'rsatilardi (foydalanuvchi
+# skrinshot bilan ko'rsatdi: "$110.30 xarajat, 0 lead" -- aslida bu kampaniya
+# umuman lead yig'ish uchun EMAS edi). Endi HAR BIR kampaniyaning HAQIQIY
+# maqsadiga (nomi + Meta `objective` maydoni) qarab, mos natija turi
+# (Lead/Xabar/Profil tashrif/Sotuv/Ilova o'rnatish) alohida aniqlanadi va
+# ANIQ shu turga tegishli action_type'dan natija olinadi -- boshqa turdagi
+# kampaniyalarga "lead" yorlig'i UMUMAN yopishtirilmaydi.
+#
+# `nomidagi_kalit_so'z -> (ko'rsatiladigan nom, ustuvorlik ro'yxati)` --
+# NOM orqali aniqlash ENG ishonchli, chunki Abdulloh o'zi kampaniya nomiga
+# maqsadni yozib qo'yadi (masalan "AB | lead | ...", "AB | SMS | ...",
+# "AB | Traffic | ...").
+NAME_KEYWORD_DIRECTIONS = [
+    (("lead",), "Lead", LEAD_ACTION_PRIORITY, "lead"),
+    (("sms", "xabar", "messag"), "Xabar", MESSAGE_ACTION_PRIORITY, "messag"),
+    (("traffic", "profil", "tashrif", "visit"), "Profil tashrif", TRAFFIC_ACTION_PRIORITY, None),
+    (("sotuv", "purchase", "sale", "sotish"), "Sotuv", SALE_ACTION_PRIORITY, None),
+    (("ilova", "app install", "install"), "Ilova o'rnatish", APP_INSTALL_ACTION_PRIORITY, None),
+]
+
+# Nomda kalit so'z topilmasa, Meta'ning `objective` maydoniga qarab (yangi VA
+# eski nomlanish -- Meta 2021-yilda objective nomlarini "OUTCOME_*" ga
+# o'zgartirgan, lekin eski hisoblarda hali ham eski nomlar uchrashi mumkin).
+OBJECTIVE_DIRECTIONS = {
+    "OUTCOME_LEADS": ("Lead", LEAD_ACTION_PRIORITY, "lead"),
+    "LEAD_GENERATION": ("Lead", LEAD_ACTION_PRIORITY, "lead"),
+    "OUTCOME_ENGAGEMENT": ("Xabar", MESSAGE_ACTION_PRIORITY, "messag"),
+    "MESSAGES": ("Xabar", MESSAGE_ACTION_PRIORITY, "messag"),
+    "OUTCOME_TRAFFIC": ("Profil tashrif", TRAFFIC_ACTION_PRIORITY, None),
+    "LINK_CLICKS": ("Profil tashrif", TRAFFIC_ACTION_PRIORITY, None),
+    "OUTCOME_SALES": ("Sotuv", SALE_ACTION_PRIORITY, None),
+    "CONVERSIONS": ("Sotuv", SALE_ACTION_PRIORITY, None),
+    "OUTCOME_APP_PROMOTION": ("Ilova o'rnatish", APP_INSTALL_ACTION_PRIORITY, None),
+    "APP_INSTALLS": ("Ilova o'rnatish", APP_INSTALL_ACTION_PRIORITY, None),
+    "OUTCOME_AWARENESS": ("Ko'rish (natija turi yo'q)", [], None),
+    "BRAND_AWARENESS": ("Ko'rish (natija turi yo'q)", [], None),
+    "REACH": ("Ko'rish (natija turi yo'q)", [], None),
+}
 
 
 def _first_matching_action_value(actions, exact_priority, contains_keyword=None):
@@ -126,27 +192,22 @@ def _first_matching_action_value(actions, exact_priority, contains_keyword=None)
     return 0
 
 
-def _classify_direction(name: str, objective: str | None, leads: int, messages: int) -> str:
-    """Kampaniyaning yo'nalishini (Lead yig'ish yoki Xabar/SMS) aniqlaydi --
-    avval NOMdagi kalit so'zdan (odatda "AB | lead | ..." kabi nomlanadi),
-    keyin Meta'ning `objective` maydonidan, oxirida haqiqiy natija turidan
-    (qaysi turdan ko'proq kelgan bo'lsa)."""
+def _resolve_direction(name: str, objective: str | None) -> tuple[str, list, str | None]:
+    """Kampaniyaning HAQIQIY maqsadini (Lead/Xabar/Profil tashrif/Sotuv/
+    Ilova o'rnatish/Noma'lum) aniqlaydi va shu turga mos action_type
+    ustuvorlik ro'yxatini qaytaradi. Avval NOMdagi kalit so'zdan (Abdulloh
+    o'zi shunday nomlaydi -- "AB | lead | ...", "AB | SMS | ...", "AB |
+    Traffic | ..."), topilmasa Meta `objective` maydonidan. Hech biri mos
+    kelmasa -- "Noma'lum" (BU KAMPANIYAGA "lead" DEB YORLIQ YOPISHTIRILMAYDI,
+    aks holda Traffic/boshqa maqsadli kampaniyalar noto'g'ri "0 lead" bo'lib
+    ko'rsatiladi -- aynan shu bug avval Abdulloh tomonidan topilgan)."""
     name_lower = (name or "").lower()
-    if "lead" in name_lower:
-        return "Lead"
-    if any(k in name_lower for k in ("sms", "xabar", "messag")):
-        return "Xabar"
-    if objective:
-        obj = objective.upper()
-        if "LEAD" in obj:
-            return "Lead"
-        if "MESSAGE" in obj or "ENGAGEMENT" in obj:
-            return "Xabar"
-    if leads and leads >= messages:
-        return "Lead"
-    if messages:
-        return "Xabar"
-    return "Noma'lum"
+    for keywords, label, priority, contains_kw in NAME_KEYWORD_DIRECTIONS:
+        if any(k in name_lower for k in keywords):
+            return label, priority, contains_kw
+    if objective and objective.upper() in OBJECTIVE_DIRECTIONS:
+        return OBJECTIVE_DIRECTIONS[objective.upper()]
+    return "Noma'lum", [], None
 
 
 def _safe_float(value, default: float = 0.0) -> float:
@@ -160,19 +221,15 @@ def _campaign_metrics(row: dict, objective_by_name: dict) -> dict:
     name = row.get("campaign_name") or "(nomsiz)"
     spend = _safe_float(row.get("spend"))
     actions = row.get("actions") or []
-    leads = _first_matching_action_value(actions, LEAD_ACTION_PRIORITY, "lead")
-    messages = _first_matching_action_value(actions, MESSAGE_ACTION_PRIORITY, "messag")
-    results = leads if leads >= messages else messages
-    cpl = (spend / results) if results else None
     objective = objective_by_name.get(name)
-    direction = _classify_direction(name, objective, leads, messages)
+    direction, priority, contains_kw = _resolve_direction(name, objective)
+    results = _first_matching_action_value(actions, priority, contains_kw) if priority or contains_kw else 0
+    cpl = (spend / results) if results else None
     return {
         "name": name,
         "direction": direction,
         "objective": objective or "-",
         "spend": spend,
-        "leads": leads,
-        "messages": messages,
         "results": results,
         "cpl": cpl,
         "impressions": int(_safe_float(row.get("impressions"))),
@@ -183,9 +240,14 @@ def _campaign_metrics(row: dict, objective_by_name: dict) -> dict:
 
 def _aggregate(campaigns: list[dict]) -> dict:
     spend = sum(c["spend"] for c in campaigns)
-    leads = sum(c["leads"] for c in campaigns)
-    messages = sum(c["messages"] for c in campaigns)
-    results = leads + messages
+    results = sum(c["results"] for c in campaigns)
+    # Yo'nalish turi bo'yicha ajratilgan jamlanma -- masalan
+    # {"Lead": 12, "Xabar": 3, "Profil tashrif": 40} -- turli maqsadli
+    # kampaniyalarni bitta "natija" raqamiga aralashtirib yubormaslik uchun,
+    # umumiy sondan TASHQARI har bir turni alohida ham ko'rsatish mumkin.
+    by_direction: dict[str, int] = {}
+    for c in campaigns:
+        by_direction[c["direction"]] = by_direction.get(c["direction"], 0) + c["results"]
     impressions = sum(c["impressions"] for c in campaigns)
     # ESLATMA: Reach kampaniyalar bo'yicha to'g'ridan-to'g'ri qo'shilgan --
     # bu TAXMINIY umumiy qamrov (haqiqiy account-darajasidagi reach'dan farq
@@ -195,12 +257,18 @@ def _aggregate(campaigns: list[dict]) -> dict:
     reach = sum(c["reach"] for c in campaigns)
     cpl = (spend / results) if results else None
     return {
-        "spend": spend, "leads": leads, "messages": messages, "results": results,
+        "spend": spend, "results": results, "by_direction": by_direction,
         "cpl": cpl, "impressions": impressions, "reach": reach,
     }
 
 
 def _daily_breakdown(since: str, until: str) -> list[dict]:
+    """Kunlik jadval uchun -- MUHIM: account darajasida turli maqsadli
+    kampaniyalar aralash bo'lishi mumkin, shuning uchun bu yerda faqat
+    Lead+Xabar (eng keng tarqalgan ikkita natija turi) yig'indisi
+    ko'rsatiladi, chunki kunlik jadvalda har bir kampaniyani alohida
+    ajratish shart emas (bu "Har bir target natijasi" bo'limida
+    allaqachon bor)."""
     try:
         rows = meta_api.get_insights(
             level="account",
@@ -216,7 +284,7 @@ def _daily_breakdown(since: str, until: str) -> list[dict]:
         actions = row.get("actions") or []
         leads = _first_matching_action_value(actions, LEAD_ACTION_PRIORITY, "lead")
         messages = _first_matching_action_value(actions, MESSAGE_ACTION_PRIORITY, "messag")
-        results = leads if leads >= messages else messages
+        results = leads + messages
         cpl = (spend / results) if results else None
         daily.append({
             "date": row.get("date_start", "?"),
@@ -228,19 +296,32 @@ def _daily_breakdown(since: str, until: str) -> list[dict]:
     return daily
 
 
+def compute_campaigns_and_totals(**insight_kwargs) -> tuple[list[dict], dict]:
+    """Berilgan davr (`time_range={"since":...,"until":...}` YOKI
+    `date_preset="..."` -- `meta_api.get_insights` qabul qiladigan istalgan
+    parametr) uchun HAR BIR kampaniyaning to'g'ri aniqlangan yo'nalishi
+    (Lead/Xabar/Profil tashrif/Sotuv/Noma'lum) va mos natija soni bilan
+    ro'yxatini, VA umumiy jamlanmani qaytaradi. Bu funksiya
+    `orchestrator.build_admin_report()` (kunlik/on-demand Telegram karta)
+    VA shu moduldagi oylik PDF hisobot -- IKKALASI UCHUN ham umumiy,
+    bitta ishonchli manba (bir xil xatoning ikki joyda alohida-alohida
+    paydo bo'lishining oldini olish uchun)."""
+    campaign_rows = meta_api.get_full_report(level="campaign", **insight_kwargs)
+    structure = meta_api.get_account_structure(active_only=False)
+    objective_by_name = {c.get("name"): c.get("objective") for c in structure.get("campaigns", [])}
+    campaigns = [_campaign_metrics(row, objective_by_name) for row in campaign_rows]
+    campaigns.sort(key=lambda c: c["spend"], reverse=True)
+    totals = _aggregate(campaigns)
+    return campaigns, totals
+
+
 def gather_monthly_report_data(since: str, until: str, period_label: str) -> dict:
     """Berilgan davr (since/until, YYYY-MM-DD) uchun barcha kerakli
     ma'lumotni yig'adi va deterministik hisoblaydi: har bir kampaniya
     natijasi, umumiy jamlanma, oldingi (bir xil uzunlikdagi) davr bilan
     solishtirish, kunlik jadval, va joriy byudjet holati. Hammasi HAQIQIY
     Meta API ma'lumotidan -- hech narsa o'ylab topilmaydi."""
-    campaign_rows = meta_api.get_full_report(level="campaign", time_range={"since": since, "until": until})
-    structure = meta_api.get_account_structure(active_only=False)
-    objective_by_name = {c.get("name"): c.get("objective") for c in structure.get("campaigns", [])}
-
-    campaigns = [_campaign_metrics(row, objective_by_name) for row in campaign_rows]
-    campaigns.sort(key=lambda c: c["spend"], reverse=True)
-    totals = _aggregate(campaigns)
+    campaigns, totals = compute_campaigns_and_totals(time_range={"since": since, "until": until})
 
     since_dt = datetime.strptime(since, "%Y-%m-%d").date()
     until_dt = datetime.strptime(until, "%Y-%m-%d").date()
@@ -250,12 +331,9 @@ def gather_monthly_report_data(since: str, until: str, period_label: str) -> dic
 
     prev_totals = None
     try:
-        prev_rows = meta_api.get_full_report(
-            level="campaign",
-            time_range={"since": prev_since_dt.isoformat(), "until": prev_until_dt.isoformat()},
+        _, prev_totals = compute_campaigns_and_totals(
+            time_range={"since": prev_since_dt.isoformat(), "until": prev_until_dt.isoformat()}
         )
-        prev_campaigns = [_campaign_metrics(row, objective_by_name) for row in prev_rows]
-        prev_totals = _aggregate(prev_campaigns)
     except meta_api.MetaAPIError:
         pass
 
@@ -347,16 +425,22 @@ def render_monthly_report_pdf(data: dict) -> bytes:
 
     # 1) Umumiy oy xulosasi
     t = data["totals"]
-    elements.append(Paragraph("Umumiy oy xulosasi", h2))
-    elements.append(make_table([
+    summary_rows = [
         ["Umumiy xarajat", _fmt_money(t["spend"])],
-        ["Umumiy natija (lead + xabar)", str(t["results"])],
-        ["   shundan Lead", str(t["leads"])],
-        ["   shundan Xabar", str(t["messages"])],
+        ["Umumiy natija (barcha turlar)", str(t["results"])],
+    ]
+    # Har bir yo'nalish turi (Lead/Xabar/Profil tashrif/Sotuv/...) bo'yicha
+    # alohida qator -- turli maqsadli kampaniyalarni bitta "natija"ga
+    # aralashtirmasdan, ANIQ qaysi turdan qancha kelganini ko'rsatish uchun.
+    for direction, count in sorted(t["by_direction"].items(), key=lambda kv: kv[1], reverse=True):
+        summary_rows.append([f"   shundan {direction}", str(count)])
+    summary_rows += [
         ["O'rtacha CPL", _fmt_money(t["cpl"])],
         ["Umumiy ko'rishlar (Impressions)", _fmt_int(t["impressions"])],
         ["Umumiy qamrov (Reach, taxminiy*)", _fmt_int(t["reach"])],
-    ], col_widths=[9 * cm, 6 * cm]))
+    ]
+    elements.append(Paragraph("Umumiy oy xulosasi", h2))
+    elements.append(make_table(summary_rows, col_widths=[9 * cm, 6 * cm]))
 
     # 2) Oldingi davr bilan solishtirish
     if data["prev_totals"]:
@@ -392,8 +476,11 @@ def render_monthly_report_pdf(data: dict) -> bytes:
         elements.append(make_table(budget_rows, col_widths=[9 * cm, 6 * cm]))
 
     # 4) Har bir target natijasi
+    # MUHIM: "Narx" (CPL emas) -- chunki har bir kampaniyaning natija turi
+    # har xil bo'lishi mumkin (Lead/Xabar/Profil tashrif/Sotuv), "CPL"
+    # (cost-per-LEAD) atamasi faqat Lead yo'nalishiga to'g'ri keladi.
     elements.append(Paragraph("Har bir target natijasi", h2))
-    rows = [["Target nomi", "Yo'nalish", "Xarajat", "Natija", "CPL", "Ko'rishlar", "Qamrov"]]
+    rows = [["Target nomi", "Yo'nalish", "Xarajat", "Natija", "Narx", "Ko'rishlar", "Qamrov"]]
     for c in data["campaigns"]:
         rows.append([
             c["name"], c["direction"], _fmt_money(c["spend"]), str(c["results"]),

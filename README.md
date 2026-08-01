@@ -221,12 +221,28 @@ jarayon (`run_polling()`, `JobQueue`) saqlab bo'lmaydi. Shu sababli:
 ### Cron chastotasi haqida muhim eslatma
 
 Vercel **Hobby (bepul) rejasida** cron faqat **kuniga bir marta** ishlaydi — `vercel.json`
-shunga mos qilib faqat `/api/cron/daily` (soat 08:00) ni o'z ichiga oladi. "Har 4
-soatda" byudjet tekshiruvi (`/api/cron/budget`) Hobby rejada Vercel Cron orqali
-ishlamaydi — buning uchun ikkita variant bor:
-- **Tavsiya (bepul):** tashqi cron xizmati (masalan [cron-job.org](https://cron-job.org))
-  orqali `https://<domeningiz>.vercel.app/api/cron/budget?secret=<CRON_SECRET>`
-  manzilini har 4 soatda chaqirtiring.
+shunga mos qilib faqat `/api/cron/daily` (soat 08:00) ni o'z ichiga oladi. Boshqa ikkita
+endpoint Hobby rejada Vercel Cron orqali ISHLAMAYDI — tashqi cron xizmati kerak:
+
+- **`/api/cron/budget`** — byudjet balansini tekshiradi (Meta hisobga qancha pul
+  qolgani, qachon tugashi). Yengil, tez-tez chaqirsa ham bo'ladi.
+- **`/api/cron/watch`** — botning "o'zi doimiy kuzatib, muammo bo'lsa xabar berib/
+  tuzatib turishi" shu orqali ishlaydi: `/api/cron/daily` bilan bir xil to'liq
+  tahlil+avtomatik-tuzatish tsiklini ishga tushiradi (Targetolog hisobni ko'radi,
+  kerak bo'lsa pause/resume/byudjet o'zgartirishni O'ZI bajaradi), lekin har
+  soatda emas, siz belgilagan tez-tez oraliqda. Diqqatga loyiq narsa bo'lmasa
+  jim turadi (spam qilmaydi).
+
+Ikkalasini ham yoqish uchun:
+- **Tavsiya (bepul):** [cron-job.org](https://cron-job.org)da ro'yxatdan o'ting va
+  ikkita alohida "cron job" yarating:
+  - `https://<domeningiz>.vercel.app/api/cron/budget?secret=<CRON_SECRET>` — har 4 soatda
+  - `https://<domeningiz>.vercel.app/api/cron/watch?secret=<CRON_SECRET>` — har 30-60
+    daqiqada (tavsiya). Bundan tez-tez (masalan har 1-5 daqiqada) chaqirish ham mumkin,
+    lekin har chaqiruv Meta API + kamida bitta Claude Sonnet chaqiruvi (pul sarflaydigan)
+    talab qiladi — reklama natijalari daqiqama-daqiqa keskin o'zgarmagani uchun 30-60
+    daqiqa odatda yetarli.
 - **Yoki:** Vercel **Pro** rejaga o'ting — shunda `vercel.json`ga
-  `{"path": "/api/cron/budget", "schedule": "0 */4 * * *"}` qo'shib, to'g'ridan-to'g'ri
+  `{"path": "/api/cron/watch", "schedule": "*/30 * * * *"}` (va xohlasangiz
+  `/api/cron/budget` uchun ham shunga o'xshash qator) qo'shib, to'g'ridan-to'g'ri
   Vercel Cron orqali ishlatish mumkin.

@@ -410,11 +410,21 @@ def gather_data() -> dict:
     )
     campaign_insights_today = meta_api.get_insights(level="campaign", date_preset="yesterday")
 
+    # MUHIM: bu funksiya endi FAQAT kunlik cron'dan emas, tez-tez (masalan
+    # har 30-60 daqiqada) ishlaydigan "kuzatuv" cron'idan ham chaqirilishi
+    # mumkin. Agar har chaqiruvda snapshot'ni qayta yozsak, "kecha bilan
+    # solishtirish" buzilib, "bir necha soat oldin bilan solishtirish"ga
+    # aylanib qolardi. Shuning uchun snapshot FAQAT kunda BIR MARTA (sana
+    # o'zgarganda) yangilanadi -- shu kunning ichidagi barcha keyingi
+    # chaqiruvlar (kuzatuv cron ham, /analyze ham) hammasi bir xil "kecha"
+    # ma'lumotini ko'radi.
     previous_snapshot = kv_store.get_json(SNAPSHOT_KV_KEY, default=None)
-    kv_store.set_json(SNAPSHOT_KV_KEY, {
-        "date": datetime.utcnow().date().isoformat(),
-        "campaign_insights": campaign_insights_today,
-    })
+    today_str = datetime.utcnow().date().isoformat()
+    if previous_snapshot is None or previous_snapshot.get("date") != today_str:
+        kv_store.set_json(SNAPSHOT_KV_KEY, {
+            "date": today_str,
+            "campaign_insights": campaign_insights_today,
+        })
 
     return {
         "account_structure": account_structure,

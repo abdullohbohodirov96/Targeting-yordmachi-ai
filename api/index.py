@@ -522,6 +522,53 @@ def cron_daily():
     return jsonify({"ok": True, "sent": True, "targets": len(targets)})
 
 
+@app.route("/api/cron/watch", methods=["GET"])
+def cron_watch():
+    """TEZ-TEZ ishlaydigan "kuzatuv" endpoint'i (masalan har 30-60 daqiqada,
+    tashqi cron xizmati -- cron-job.org -- orqali chaqiriladi, chunki Vercel
+    Hobby'ning o'z cron'i kuniga faqat 1 marta ishlaydi).
+
+    `/api/cron/daily` bilan BIR XIL tahlil+avtomatik-tuzatish tsiklini
+    ishga tushiradi (Targetolog hisobni ko'radi, kerak bo'lsa pause/resume/
+    byudjet o'zgartirish kabi amallarni O'ZI bajaradi) -- farqi shundaki,
+    bu tez-tez chaqiriladi, shuning uchun muammo yuzaga kelganda soatlab
+    emas, daqiqalar ichida aniqlanadi va (agar avtomatik tuzatib bo'ladigan
+    bo'lsa) tuzatiladi. Har doimgidek, faqat DIQQATGA LOYIQ narsa bo'lsa
+    (o'zgarish/xato/qo'lda ko'rib chiqish kerak) xabar yuboriladi -- hammasi
+    joyida bo'lsa jim turadi, ortiqcha xabar bilan bezovta qilmaydi.
+
+    ESLATMA (xarajat haqida): har chaqiruv Meta API'dan o'qish + kamida bitta
+    Claude Sonnet chaqiruvini talab qiladi. Juda tez-tez (masalan har 1-5
+    daqiqada) chaqirish keraksiz xarajatga olib kelishi mumkin -- 30-60
+    daqiqalik oraliq odatda yetarli, chunki reklama natijalari daqiqama-daqiqa
+    keskin o'zgarmaydi."""
+    if not _cron_authorized():
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    targets = _daily_report_targets()
+    if not targets:
+        return jsonify({
+            "ok": True,
+            "note": "Hisobot yuboriladigan chat yo'q — TELEGRAM_AGENTS_GROUP_ID/"
+                    "TELEGRAM_REPORT_GROUP_ID sozlanmagan va hech kim /start bosmagan.",
+        })
+
+    try:
+        report = orchestrator.run_daily_cron_report(dry_run=False)
+    except Exception:
+        logger.exception("Kuzatuv tsikli xatosi")
+        return jsonify({"ok": False, "error": "watch analysis failed"}), 500
+
+    if report is None:
+        return jsonify({"ok": True, "sent": False, "note": "diqqatga loyiq narsa yo'q"})
+
+    text = "👀 Kuzatuv natijasi:\n\n" + report
+    for cid in targets:
+        save_last_report(cid, report)
+        tg_send(cid, text)
+    return jsonify({"ok": True, "sent": True, "targets": len(targets)})
+
+
 @app.route("/api/cron/budget", methods=["GET"])
 def cron_budget():
     if not _cron_authorized():

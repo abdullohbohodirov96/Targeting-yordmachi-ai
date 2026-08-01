@@ -39,6 +39,7 @@ import meta_api
 import orchestrator
 import budget_tracker
 import kv_store
+import monthly_report
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("target-master-webhook")
@@ -99,6 +100,67 @@ def tg_delete(chat_id: int, message_id: int | None) -> None:
         requests.post(f"{TELEGRAM_API}/deleteMessage", json={"chat_id": chat_id, "message_id": message_id}, timeout=20)
     except Exception:
         pass  # xabar allaqachon o'chirilgan/topilmasa muammo emas
+
+
+def tg_send_document(chat_id: int, filename: str, file_bytes: bytes, caption: str = "") -> bool:
+    """Faylni (masalan oylik PDF hisobotni) Telegram'ga HUJJAT sifatida
+    yuboradi (`sendDocument`, multipart/form-data). Oddiy `tg_send()`dan farqi
+    -- bu yerda matn emas, binary fayl yuboriladi."""
+    import requests
+    try:
+        r = requests.post(
+            f"{TELEGRAM_API}/sendDocument",
+            data={"chat_id": chat_id, "caption": caption[:1024]},
+            files={"document": (filename, file_bytes, "application/pdf")},
+            timeout=55,
+        )
+        ok = bool(r.json().get("ok"))
+        if not ok:
+            logger.error("sendDocument xato qaytardi: %s", r.text[:500])
+        return ok
+    except Exception:
+        logger.exception("Telegramga hujjat (PDF) yuborishda xatolik")
+        return False
+
+
+def _handle_monthly_report(chat_id: int, user_text: str) -> None:
+    """Oylik PDF hisobot so'ralganda chaqiriladi (`monthly_report.
+    is_monthly_report_request()` orqali ANIQLANADI -- classify_intent/
+    Claude Sonnet zanjiriga UMUMAN kirmaydi, chunki bu butunlay boshqa oqim:
+    hech qanday AI chaqirilmaydi, faqat HAQIQIY Meta ma'lumotidan
+    deterministik hisoblab, PDF hujjat sifatida yuboriladi.
+
+    MUHIM: aynan shu turdagi so'rov avval ANALYSIS sifatida aniqlanib,
+    to'liq Targetolog/Marketolog Claude Sonnet zanjiriga tushib qolgan va
+    Vercel'ning 60 soniyalik limitiga urilib, 504/timeout bergan edi (foyda-
+    lanuvchi tomonidan Vercel loglari orqali ko'rsatilgan). Bu funksiya AYNAN
+    o'sha muammoni butunlay chetlab o'tadi -- LLM chaqiruvi yo'q, shuning
+    uchun tez va ishonchli."""
+    status_id = tg_send_status(chat_id, "⏳ Oylik hisobotni tayyorlayapman (PDF)...")
+    try:
+        since, until, period_label = monthly_report.resolve_monthly_period(user_text)
+        data = monthly_report.gather_monthly_report_data(since, until, period_label)
+        pdf_bytes = monthly_report.render_monthly_report_pdf(data)
+    except meta_api.MetaAPIError as e:
+        tg_delete(chat_id, status_id)
+        tg_send(chat_id, f"⚠️ Meta API'dan ma'lumot olishda xatolik: {e}")
+        return
+    except Exception as e:
+        logger.exception("Oylik hisobot yaratishda xatolik")
+        tg_delete(chat_id, status_id)
+        tg_send(
+            chat_id,
+            f"⚠️ Oylik hisobotni tayyorlashda kutilmagan xatolik: {e}\n\n"
+            "Qaytadan urinib ko'ring.",
+        )
+        return
+
+    filename = f"oylik_hisobot_{since}_{until}.pdf"
+    caption = f"📊 Oylik target hisoboti: {period_label}"
+    sent = tg_send_document(chat_id, filename, pdf_bytes, caption=caption)
+    tg_delete(chat_id, status_id)
+    if not sent:
+        tg_send(chat_id, "⚠️ PDF hujjatni yuborishda xatolik yuz berdi. Qaytadan urinib ko'ring.")
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +344,18 @@ def _trigger_async_processing(payload: dict) -> tuple[bool, str]:
 def handle_free_text(chat_id: int, user_text: str) -> None:
     history = get_history(chat_id)
     budget_tracker.set_notify_chat_id(chat_id)
+
+    # Oylik PDF hisobot -- classify_intent/Claude Sonnet zanjiridan OLDIN,
+    # deterministik kalit so'z orqali aniqlanadi (yuqoridagi
+    # `_handle_monthly_report()` docstringiga qarang -- sabab: bu so'rov
+    # avval ANALYSIS deb aniqlanib, og'ir Sonnet zanjiriga tushib, 60
+    # soniyalik Vercel limitiga urilib timeout bergan edi).
+    if monthly_report.is_monthly_report_request(user_text):
+        _handle_monthly_report(chat_id, user_text)
+        history.append({"role": "user", "content": user_text})
+        history.append({"role": "assistant", "content": "[Oylik PDF hisobot yuborildi]"})
+        save_history(chat_id, history)
+        return
 
     # Ish jarayonini ko'rsatuvchi vaqtinchalik xabar — foydalanuvchi bot
     # "osilib qolganmi yoki ishlayaptimi" bilmay qolmasligi uchun.

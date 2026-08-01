@@ -102,6 +102,7 @@ def get_insights(
     breakdowns: list[str] | None = None,   # masalan ["region"]
     fields: list[str] | None = None,
     time_range: dict | None = None,   # {"since": "YYYY-MM-DD", "until": "YYYY-MM-DD"}
+    time_increment: int | str | None = None,   # 1 = har kun uchun alohida qator
 ) -> list[dict]:
     """Kampaniya/adset/ad darajasidagi statistikani qaytaradi.
 
@@ -110,7 +111,11 @@ def get_insights(
 
     `time_range` berilsa (masalan foydalanuvchi aniq bir kun yoki oraliq
     so'raganda -- "20 iyul", "1-10 avgust"), u `date_preset`dan USTUN turadi
-    va aynan o'sha sanalar oralig'idagi ma'lumot qaytariladi."""
+    va aynan o'sha sanalar oralig'idagi ma'lumot qaytariladi.
+
+    `time_increment=1` bersangiz, natija BIR QATOR o'rniga HAR KUN uchun
+    alohida qator (`date_start`/`date_stop` maydonlari bilan) qaytaradi --
+    oylik hisobotdagi "kunlik jadval" uchun ishlatiladi (monthly_report.py)."""
     params = {
         "level": level,
         "fields": ",".join(fields or DEFAULT_FIELDS),
@@ -122,6 +127,8 @@ def get_insights(
         params["date_preset"] = date_preset
     if breakdowns:
         params["breakdowns"] = ",".join(breakdowns)
+    if time_increment:
+        params["time_increment"] = time_increment
     data = _get(f"{AD_ACCOUNT_ID}/insights", params)
     return data.get("data", [])
 

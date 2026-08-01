@@ -99,13 +99,23 @@ Har bir ijro natijasi (muvaffaqiyatli/xato) Telegram hisobotida aniq ko'rsatilad
 
 ### Telegram'da qanday ishlatiladi (erkin matn orqali)
 
-Bot har bir xabarni avtomatik 3 turga ajratadi:
+Bot har bir xabarni avtomatik turlarga ajratadi:
 1. **Amaliy buyruq** ("yangi target yoq...", "X reklamani to'xtat", "abtest boshla") →
    to'liq Targetolog→Marketolog→ijro zanjiri ishga tushadi.
-2. **Metrika savoli** ("video ko'rish % qancha", "bugun qancha xarajat bo'ldi") →
-   Meta API'dan real ma'lumot tortib, aniq raqam bilan javob beradi.
+2. **Metrika savoli** ("video ko'rish % qancha", "bugun qancha xarajat bo'ldi",
+   "rejalashtirilgan targetlar bormi") → Meta API'dan real ma'lumot tortib,
+   qat'iy "ADMIN TARGET HISOBOTI" formatida javob beradi (`orchestrator.
+   build_admin_report`).
 3. **Umumiy savol** ("CBO nima", "byudjetni qachon oshirish kerak") → bilim
    bazasidan maslahat beradi, hisobga tegmaydi.
+4. **Oylik hisobot** ("bir oylik hisobot ber", "iyul oyi hisoboti", "oylik
+   pdf") → `monthly_report.py` orqali PDF hujjat sifatida yuboriladi: har
+   bir target (kampaniya) alohida nomi/yo'nalishi/xarajat/natija/CPL/
+   ko'rishlar/qamrov bilan, + umumiy oy xulosasi, oldingi davr bilan
+   solishtirish, byudjet monitoring, kunlik jadval. MUHIM: bu yo'nalish
+   HECH QANDAY AI (na OpenAI, na Anthropic) ishlatmaydi -- barcha raqamlar
+   100% deterministik Python bilan hisoblanadi (arzonroq va aniqroq,
+   avvalgi LLM-hisoblash xatolaridan keyin ataylab shunday qilingan).
 
 `/analyze`, `/pause`, `/resume`, `/status` buyruqlari ham alohida mavjud.
 

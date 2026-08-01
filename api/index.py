@@ -28,6 +28,7 @@ import sys
 import json
 import logging
 from pathlib import Path
+from datetime import datetime, timedelta
 
 from flask import Flask, request, jsonify
 
@@ -566,6 +567,50 @@ def cron_watch():
     for cid in targets:
         save_last_report(cid, report)
         tg_send(cid, text)
+    return jsonify({"ok": True, "sent": True, "targets": len(targets)})
+
+
+@app.route("/api/cron/admin-report", methods=["GET"])
+def cron_admin_report():
+    """Har kuni belgilangan vaqtda (tavsiya: 09:00, O'zbekiston vaqti --
+    cron-job.org'da 04:00 UTC qilib sozlang) qat'iy "ADMIN TARGET HISOBOTI"
+    formatidagi qisqa hisobot yuboradi (`orchestrator.build_admin_report`).
+
+    MUHIM FARQ `/api/cron/daily`/`/api/cron/watch`dan: bular to'liq
+    audit+avtomatik-tuzatish tsiklini (Claude Sonnet orqali, pulli) ishga
+    tushiradi; bu endpoint esa FAQAT bugungi asosiy ko'rsatkichlarni
+    (xarajat/lead/CPL/CTR/CPM va h.k.) OpenAI orqali hisoblab, foydalanuvchi
+    so'ragan qat'iy formatda yuboradi -- hech qanday amal (pause/resume/
+    byudjet o'zgartirish) BAJARMAYDI, faqat hisobot."""
+    if not _cron_authorized():
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    targets = _daily_report_targets()
+    if not targets:
+        return jsonify({
+            "ok": True,
+            "note": "Hisobot yuboriladigan chat yo'q -- TELEGRAM_AGENTS_GROUP_ID/"
+                    "TELEGRAM_REPORT_GROUP_ID sozlanmagan va hech kim /start bosmagan.",
+        })
+
+    tashkent_now = datetime.utcnow() + timedelta(hours=5)  # O'zbekiston vaqti (UTC+5)
+    period_label = tashkent_now.strftime("%d.%m.%Y")
+    hisobot_vaqti = tashkent_now.strftime("%H:%M")
+
+    try:
+        report = orchestrator.build_admin_report(
+            period_label,
+            hisobot_vaqti,
+            "Ertalabki holat va bugungi ish rejasi",
+            insight_kwargs={"date_preset": "today"},
+        )
+    except Exception as e:
+        logger.exception("Admin hisobot xatosi")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    for cid in targets:
+        save_last_report(cid, report)
+        tg_send(cid, report)
     return jsonify({"ok": True, "sent": True, "targets": len(targets)})
 
 

@@ -224,7 +224,7 @@ jarayon (`run_polling()`, `JobQueue`) saqlab bo'lmaydi. Shu sababli:
 ### Cron chastotasi haqida muhim eslatma
 
 Vercel **Hobby (bepul) rejasida** cron faqat **kuniga bir marta** ishlaydi — `vercel.json`
-shunga mos qilib faqat `/api/cron/daily` (soat 08:00) ni o'z ichiga oladi. Boshqa ikkita
+shunga mos qilib faqat `/api/cron/daily` (soat 08:00) ni o'z ichiga oladi. Qolgan uchta
 endpoint Hobby rejada Vercel Cron orqali ISHLAMAYDI — tashqi cron xizmati kerak:
 
 - **`/api/cron/budget`** — byudjet balansini tekshiradi (Meta hisobga qancha pul
@@ -235,17 +235,29 @@ endpoint Hobby rejada Vercel Cron orqali ISHLAMAYDI — tashqi cron xizmati kera
   kerak bo'lsa pause/resume/byudjet o'zgartirishni O'ZI bajaradi), lekin har
   soatda emas, siz belgilagan tez-tez oraliqda. Diqqatga loyiq narsa bo'lmasa
   jim turadi (spam qilmaydi).
+- **`/api/cron/admin-report`** — har kuni belgilangan vaqtda (tavsiya: ertalab
+  09:00, O'zbekiston vaqti) qat'iy "📊 ADMIN TARGET HISOBOTI" formatidagi qisqa
+  hisobot yuboradi (xarajat/lead/xabar/CPL/CTR/CPC/CPM/impressions/reach/
+  frequency + eng yaxshi/yomon kampaniya). Bu `/api/cron/daily`/`watch`dan
+  FARQLI: hech qanday amal (pause/resume/byudjet) BAJARMAYDI, faqat hisobot,
+  va FAQAT OpenAI orqali ishlaydi (Claude/Anthropic bu yerda umuman
+  chaqirilmaydi — arzon).
 
-Ikkalasini ham yoqish uchun:
+Barchasini yoqish uchun:
 - **Tavsiya (bepul):** [cron-job.org](https://cron-job.org)da ro'yxatdan o'ting va
-  ikkita alohida "cron job" yarating:
+  uchta alohida "cron job" yarating:
   - `https://<domeningiz>.vercel.app/api/cron/budget?secret=<CRON_SECRET>` — har 4 soatda
   - `https://<domeningiz>.vercel.app/api/cron/watch?secret=<CRON_SECRET>` — har 30-60
     daqiqada (tavsiya). Bundan tez-tez (masalan har 1-5 daqiqada) chaqirish ham mumkin,
     lekin har chaqiruv Meta API + kamida bitta Claude Sonnet chaqiruvi (pul sarflaydigan)
     talab qiladi — reklama natijalari daqiqama-daqiqa keskin o'zgarmagani uchun 30-60
     daqiqa odatda yetarli.
+  - `https://<domeningiz>.vercel.app/api/cron/admin-report?secret=<CRON_SECRET>` —
+    har kuni bir marta, soat **04:00 UTC** (= 09:00 O'zbekiston vaqti, UTC+5) qilib
+    sozlang. Bu FAQAT OpenAI ishlatadi, shuning uchun tez-tez chaqirsangiz ham
+    (masalan yana kunning boshqa vaqtida) katta xarajat qilmaydi.
 - **Yoki:** Vercel **Pro** rejaga o'ting — shunda `vercel.json`ga
-  `{"path": "/api/cron/watch", "schedule": "*/30 * * * *"}` (va xohlasangiz
+  `{"path": "/api/cron/watch", "schedule": "*/30 * * * *"}` va
+  `{"path": "/api/cron/admin-report", "schedule": "0 4 * * *"}` (va xohlasangiz
   `/api/cron/budget` uchun ham shunga o'xshash qator) qo'shib, to'g'ridan-to'g'ri
   Vercel Cron orqali ishlatish mumkin.

@@ -24,7 +24,7 @@ import json
 import logging
 import concurrent.futures
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import anthropic
 import requests
@@ -353,6 +353,16 @@ def _execute_ab_test(action: dict) -> dict:
     }
 
 AUTO_EXECUTABLE_TYPES = set(ACTION_EXECUTORS.keys())
+
+# "Rejalashtirilgan/pauzadagi/hali yoqilmagan" target so'rovlarini aniqlash
+# uchun -- bunday savolda PAUSED holatidagi kampaniya/adset/ad'lar
+# (`meta_api.get_account_structure`dan, HAQIQIY status maydoni bo'yicha,
+# LLM'siz -- oddiy filtrlash orqali) ro'yxati javobga qo'shib beriladi.
+_PLANNED_KEYWORDS = re.compile(
+    r"rejalashtirilgan|pauzada|to'xtatilgan|hali yoqilmagan|tayyor turgan|"
+    r"tayyor holatda",
+    re.IGNORECASE,
+)
 
 
 class TargetologFormatError(Exception):
@@ -937,64 +947,134 @@ def _resolve_query_period(user_text: str) -> tuple[dict, str]:
     return {"date_preset": "last_7d"}, label
 
 
+ADMIN_REPORT_BODY_TEMPLATE = (
+    "\U0001F4B0 Xarajat: $<son>\n"
+    "\U0001F4E9 Leadlar: <son>\n"
+    "\U0001F4AC Xabarlar: <son>\n"
+    "\U0001F3AF CPL: $<son>\n"
+    "\U0001F4C8 CTR: <son>%\n"
+    "\U0001F4F1 CPC: $<son>\n"
+    "\U0001F4F6 CPM: $<son>\n"
+    "\U0001F441 Impressions: <son>\n"
+    "\U0001F4CD Reach: <son>\n"
+    "\U0001F504 Frequency: <son>\n\n"
+    "\U0001F525 Eng yaxshi kampaniya:\n<nom>\n"
+    "\u26A0\uFE0F Eng yomon kampaniya:\n<nom>"
+)
+
+
+def _admin_report_header(period_label: str, hisobot_vaqti: str, subtitle: str) -> str:
+    return (
+        "\U0001F4CA ADMIN TARGET HISOBOTI\n\n"
+        f"\U0001F4C5 Davr: {period_label}\n"
+        f"\U0001F553 Hisobot vaqti: {hisobot_vaqti}\n"
+        f"\U0001F4DD {subtitle}\n"
+        "\U0001F7E2 Real Data\n\n"
+    )
+
+
+def build_admin_report(
+    period_label: str,
+    hisobot_vaqti: str,
+    subtitle: str = "Joriy holat",
+    insight_kwargs: dict | None = None,
+) -> str:
+    """"ADMIN TARGET HISOBOTI" qat'iy formatidagi hisobotni quradi (kunlik
+    09:00 cron VA oddiy "ma'lumot/hisobot ber" so'rovlari -- IKKALASI HAM shu
+    bir xil ko'rinishda javob berishi uchun, foydalanuvchi so'ragan tarzda).
+    Sarlavha/sana/vaqt qismini biz o'zimiz (deterministik, LLM'siz) yozamiz --
+    faqat sonli ko'rsatkichlar (xarajat/lead/CPL va h.k.) va eng yaxshi/yomon
+    kampaniya nomi OpenAI orqali, FAQAT haqiqiy Meta ma'lumotidan hisoblanadi."""
+    insight_kwargs = insight_kwargs or {"date_preset": "today"}
+    header = _admin_report_header(period_label, hisobot_vaqti, subtitle)
+    try:
+        account_rows = meta_api.get_insights(level="account", fields=meta_api.DEFAULT_FIELDS, **insight_kwargs)
+        campaign_rows = meta_api.get_full_report(level="campaign", **insight_kwargs)
+    except meta_api.MetaAPIError as e:
+        return header + f"\u26A0\uFE0F Meta API'dan ma'lumot olishda xatolik: {e}"
+
+    account_json = json.dumps(account_rows, ensure_ascii=False, indent=2)
+    campaign_json = json.dumps(campaign_rows, ensure_ascii=False, indent=2)
+
+    system_prompt = (
+        "Senga hisobning HAQIQIY Meta Ads statistikasi beriladi (account "
+        "darajasida umumiy va har bir kampaniya darajasida alohida). Vazifang: "
+        "FAQAT quyidagi qatorlarni, AYNAN shu tartibda va shu formatda "
+        "to'ldirib qaytarish -- boshqa hech qanday so'z, izoh, sarlavha "
+        "QO'SHMA (sarlavhani men o'zim qo'shaman):\n\n"
+        + ADMIN_REPORT_BODY_TEMPLATE +
+        "\n\nQoidalar: barcha sonlar FAQAT pastda berilgan HAQIQIY "
+        "ma'lumotdan hisoblanishi kerak, hech narsani o'ylab topma. Xarajat = "
+        "account darajasidagi 'spend'. Leadlar = actions ichida action_type "
+        "nomida 'lead' so'zi bor barcha yozuvlarning 'value' yig'indisi "
+        "(masalan 'lead', 'onsite_conversion.lead_grouped', "
+        "'offsite_conversion.fb_pixel_lead'). Xabarlar = actions ichida "
+        "action_type nomida 'messag' so'zi bor yozuvlarning yig'indisi "
+        "(masalan 'onsite_conversion.messaging_conversation_started_7d'). "
+        "CPL = Xarajat / Leadlar (Leadlar 0 bo'lsa, CPL o'rniga '-' yoz). "
+        "CTR/CPC/CPM/Impressions/Reach/Frequency = account darajasidagi mos "
+        "maydonlar ('ctr','cpc','cpm','impressions','reach','frequency'). "
+        "Biror maydon topilmasa/bo'sh bo'lsa, 0 yoz (o'ylab topma). Eng "
+        "yaxshi kampaniya = ENG KO'P lead keltirgan (lead bo'lmasa, ENG KAM "
+        "CPM/eng ko'p natija bergan) kampaniya nomi. Eng yomon kampaniya = "
+        "ENG KO'P xarajat qilib ENG KAM/0 lead keltirgan kampaniya nomi. "
+        "Atigi bitta yoki hech qanday faol kampaniya bo'lmasa, shu joyga '-' "
+        "yoz. Pul miqdorini '$' bilan ikkita kasr xonagacha (masalan $4.35), "
+        "foizni bitta kasr xonagacha (masalan 1.34%), Impressions/Reach'ni "
+        "minglik ajratkich bilan (masalan 4 786) yoz."
+    )
+
+    body = call_light(
+        system_prompt,
+        f"account darajasida umumiy statistika ({period_label}):\n{account_json}\n\n"
+        f"kampaniya darajasida ({period_label}):\n{campaign_json}",
+        max_tokens=350,
+    ).strip()
+
+    return header + body
+
+
+def _current_tashkent_time() -> tuple[str, str]:
+    now = datetime.utcnow() + timedelta(hours=5)  # O'zbekiston vaqti (UTC+5)
+    return now.strftime("%d.%m.%Y"), now.strftime("%H:%M")
+
+
 def answer_data_question(user_text: str, history_text: str = "") -> str:
     """Foydalanuvchi hisobdagi aniq metrika/raqamni, umumiy joriy holatni,
     yoki REJALASHTIRILGAN/PAUZADAGI (hali yoqilmagan/o'chirilgan) targetlar
     haqida so'raganda (masalan: 'CPA qancha', 'bugungi ma'lumotlarni ber',
     '20 iyulni bergin', 'rejalashtirilgan targetlar bormi') chaqiriladi.
-    Meta API'dan real ma'lumotni (statistika VA hisob tuzilmasi/status) tortib,
-    faqat SHU ma'lumot asosida -- o'ylab topmasdan -- javob beradi. Bu action
-    emas, faqat hisobot, shuning uchun Marketolog tekshiruvidan o'tmaydi
-    (hisobga hech narsa o'zgartirilmaydi)."""
+
+    Foydalanuvchining aniq talabiga ko'ra: javob HAR DOIM kunlik 09:00
+    "ADMIN TARGET HISOBOTI" bilan BIR XIL qat'iy formatda beriladi
+    (`build_admin_report`), farqi faqat davr (`_resolve_query_period`
+    orqali aniqlanadi) va sarlavhadagi vaqt/izoh. Agar savol aynan
+    rejalashtirilgan/pauzadagi targetlar haqida bo'lsa, pastiga
+    `account_structure`dan (HAQIQIY `status` maydoni, LLM'siz oddiy
+    filtrlash orqali) PAUSED ro'yxati ham qo'shiladi."""
     insight_kwargs, period_label = _resolve_query_period(user_text)
-    try:
-        report_data = meta_api.get_full_report(level="ad", **insight_kwargs)
-    except meta_api.MetaAPIError as e:
-        return f"⚠️ Meta API'dan ma'lumot olishda xatolik: {e}"
+    _, hisobot_vaqti = _current_tashkent_time()
+    report = build_admin_report(period_label, hisobot_vaqti, "So'ralgan ma'lumot", insight_kwargs)
 
-    # Hisob tuzilmasi (status bilan) -- "rejalashtirilgan/tayyor/pauzadagi
-    # targetlar bormi" kabi savollarga javob berish uchun kerak, chunki
-    # PAUZADAGI (hali yoqilmagan) kampaniyalar ko'pincha `insights`da UMUMAN
-    # ko'rinmaydi (chunki ularda hozircha xarajat/natija yo'q).
-    try:
-        account_structure = meta_api.get_account_structure(active_only=False)
-        structure_json = json.dumps(account_structure, ensure_ascii=False, indent=2)
-    except meta_api.MetaAPIError as e:
-        structure_json = f"(hisob tuzilmasi olinmadi: {e})"
+    if _PLANNED_KEYWORDS.search(user_text):
+        try:
+            structure = meta_api.get_account_structure(active_only=False)
+        except meta_api.MetaAPIError as e:
+            report += f"\n\n\u26A0\uFE0F Hisob tuzilmasini olishda xatolik: {e}"
+        else:
+            paused_names = []
+            for obj_type in ("campaigns", "adsets", "ads"):
+                for obj in structure.get(obj_type, []):
+                    if str(obj.get("status", "")).upper() == "PAUSED":
+                        paused_names.append(f"{obj.get('name', obj.get('id'))} ({obj_type[:-1]})")
+            if paused_names:
+                report += "\n\n\u23F8 Rejalashtirilgan/pauzadagi targetlar:\n" + "\n".join(
+                    f"- {name}" for name in paused_names
+                )
+            else:
+                report += "\n\n\u23F8 Hozircha rejalashtirilgan/pauzadagi target yo'q."
 
-    data_json = json.dumps(report_data, ensure_ascii=False, indent=2)
-    data_qa_system = (
-        f"{TARGETOLOG_ROLE}\n\n---\n\n# BILIM BAZASI\n\n{KNOWLEDGE_BASE}\n\n---\n\n"
-        "MUHIM: Bu safar sendan action_plan JSON EMAS, oddiy o'zbekcha matn "
-        "javob kutilyapti. Foydalanuvchi hisobdagi aniq metrika/raqamni, umumiy "
-        "joriy holatni, YOKI rejalashtirilgan/tayyor/pauzadagi (hali yoqilmagan "
-        "yoki o'chirilgan) targetlar haqida so'ramoqda.\n\n"
-        f"Senga berilgan `ad_insights` ma'lumoti {period_label}ga tegishli -- "
-        "javobingda buni aniq ayt. Faqat haqiqiy `ad_insights` ma'lumotidan "
-        "foydalanib javob ber (masalan foiz hisoblash: video_thruplay_watched_actions "
-        "/ video_play_actions * 100; lead soni odatda `actions` ichida "
-        "action_type='lead' yoki 'onsite_conversion.lead_grouped' kabi nomlar bilan "
-        "keladi -- shulardan yig'ib ber). Agar foydalanuvchi 'hammasini ber' desa, "
-        "kamida: lead/natija soni, xarajat (spend), va CPL/CPA (spend / lead soni) "
-        "ni albatta qo'sh.\n\n"
-        "Agar savol 'rejalashtirilgan', 'tayyor', 'pauzadagi', 'hali yoqilmagan' "
-        "targetlar haqida bo'lsa -- `account_structure` ma'lumotidan (campaigns/"
-        "adsets/ads, har birining `status` maydoni bilan) PAUSED holatidagilarni "
-        "nom (+ID, kerak bo'lsa) bilan ro'yxat qilib ber. Agar PAUSED obyekt "
-        "umuman topilmasa, buni ochiq ayt ('hozircha pauzadagi/rejalashtirilgan "
-        "target yo'q').\n\n"
-        "Agar kerakli maydon ma'lumotda umuman yo'q bo'lsa (masalan SMS alohida "
-        "kuzatilmasa), buni ochiq ayt, o'ylab topma. Javobni Telegram uchun qisqa "
-        "va tushunarli qil, kerak bo'lsa ad/adset nomlari bo'yicha alohida ko'rsat."
-    )
-    answer = call_light(
-        data_qa_system,
-        f"{history_text}\n\nSavol: \"{user_text}\"\n\n"
-        f"ad_insights ({period_label}):\n{data_json}\n\n"
-        f"account_structure (barcha kampaniya/adset/ad, status bilan):\n{structure_json}",
-        max_tokens=900,
-    )
-    return answer
+    return report
 
 
 if __name__ == "__main__":

@@ -133,7 +133,16 @@ def _call_openai(api_key: str, system_prompt: str, messages: list[dict], max_tok
         "https://api.openai.com/v1/chat/completions",
         headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
         json={"model": OPENAI_MODEL, "temperature": 0, "max_tokens": max_tokens, "messages": full_messages},
-        timeout=20,
+        # MUHIM: avval 20 soniya edi -- OpenAI ba'zan shundan sekinroq javob
+        # berib, keraksiz "Read timed out" xatosiga olib kelardi (Claude'ga
+        # fallback endi yo'qligi uchun bu to'g'ridan-to'g'ri foydalanuvchiga
+        # ko'rinadi). 55ga oshirildi -- bu Vercel funksiyasining o'zi 60
+        # soniyada MAJBURIY to'xtaydigan chegarasidan atigi 5 soniya kam
+        # (Telegram xabar yuborish/o'chirish uchun ozgina joy qoldirish
+        # uchun). Butunlay chegarasiz qilib bo'lmaydi -- Vercel baribir 60
+        # soniyada funksiyani o'zi majburan to'xtatadi (504), shuning uchun
+        # 55 -- amalda erishsa bo'ladigan ENG UZUN vaqt.
+        timeout=55,
     )
     resp.raise_for_status()
     data = resp.json()

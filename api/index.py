@@ -243,11 +243,24 @@ def _trigger_async_processing(payload: dict) -> tuple[bool, str]:
 
     import requests
     url = f"{_self_base_url()}/api/process-action"
+    headers = {"Authorization": f"Bearer {CRON_SECRET}"}
+    # Agar Vercel loyihasida "Deployment Protection" (Vercel Authentication)
+    # yoqilgan bo'lsa, HAR BIR so'rov (hatto bizning o'z ichki so'rovimiz
+    # ham) Vercel'ning o'zi tomonidan 401 bilan rad etiladi -- CRON_SECRET
+    # bunga ta'sir qilmaydi, chunki bu tekshiruv bizning Flask kodimizga
+    # yetib kelishidan OLDIN, Vercel'ning "edge" darajasida sodir bo'ladi.
+    # Buni chetlab o'tish uchun Vercel'da "Protection Bypass for Automation"
+    # yoqilsa, u avtomatik `VERCEL_AUTOMATION_BYPASS_SECRET` degan environment
+    # variable yaratadi -- shuni maxsus header sifatida qo'shsak, Vercel
+    # so'rovni o'tkazib yuboradi.
+    bypass_secret = os.environ.get("VERCEL_AUTOMATION_BYPASS_SECRET")
+    if bypass_secret:
+        headers["x-vercel-protection-bypass"] = bypass_secret
     try:
         resp = requests.post(
             url,
             json=payload,
-            headers={"Authorization": f"Bearer {CRON_SECRET}"},
+            headers=headers,
             timeout=0.5,
         )
         if 200 <= resp.status_code < 300:

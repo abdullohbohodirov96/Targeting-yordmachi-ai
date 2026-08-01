@@ -65,70 +65,66 @@ BUSINESS_RULES = json.loads((BASE_DIR / "business_rules.json").read_text(encodin
 TARGETOLOG_SYSTEM = f"{TARGETOLOG_ROLE}\n\n---\n\n# BILIM BAZASI\n\n{KNOWLEDGE_BASE}\n\n---\n\n{ACTION_SCHEMA}"
 MARKETOLOG_SYSTEM = f"{MARKETOLOG_ROLE}\n\n---\n\n{ACTION_SCHEMA}"
 
-# MODEL TANLASH STRATEGIYASI (xarajatni balanslash uchun):
-#   - MODEL (Sonnet) — faqat HAQIQIY vazifa/qaror yaratish uchun: Targetolog
+# MODEL TANLASH STRATEGIYASI (xarajatni balanslash uchun -- ataylab qilingan qaror):
+#   - MODEL (Sonnet) -- FAQAT HAQIQIY vazifa/qaror yaratish uchun: Targetolog
 #     action_plan tuzganda (yangi kampaniya, byudjet/auditoriya o'zgarishi,
 #     murakkab tashxis) va Marketolog tekshiruvida. Bu joylarda chuqur
-#     mulohaza va bilim bazasiga tayanish kerak — arzon model xato qiladi.
-#   - LIGHT_MODEL (Haiku) — intent aniqlash, oddiy metrika savoliga real
-#     raqamlar bilan javob berish (`answer_data_question`), byudjet
-#     deposit/savolini tushunish, va oddiy erkin suhbat (bilim bazasidan
-#     maslahat, hisobga tegmaydigan). Bular "vazifa yaratish" emas, faqat
-#     o'qish/tushuntirish — Haiku yetarli va bir necha barobar arzon.
+#     mulohaza va bilim bazasiga tayanish kerak -- shuning uchun Anthropic
+#     ishlatiladi va FAQAT shu yerda ishlatiladi.
+#   - Boshqa HAMMA narsa -- intent aniqlash, oddiy metrika savoliga real
+#     raqamlar bilan javob berish (`answer_data_question`), davr/sana
+#     aniqlash (`_resolve_query_period`), byudjet xabarini tushunish, kunlik
+#     hisobotlar va oddiy erkin suhbat -- FAQAT OpenAI orqali ishlaydi
+#     (`call_light`/`call_light_chat`). Bular "vazifa yaratish" emas, faqat
+#     o'qish/tushuntirish -- Anthropic API xarajatini bu yerda umuman
+#     sarflamaslik uchun Claude'ga fallback ATAYLAB OLIB TASHLANGAN: agar
+#     `OPENAI_API_KEY` sozlanmagan yoki OpenAI so'rovi xato bersa, funksiya
+#     xato qaytaradi (Claude Haiku'ga sirli tushib qolmaydi) -- chaqiruvchi
+#     joy buni ushlab, foydalanuvchiga tushunarli xabar ko'rsatadi.
 MODEL = "claude-sonnet-4-5"
-LIGHT_MODEL = "claude-haiku-4-5-20251001"
-INTENT_MODEL = LIGHT_MODEL  # eski nom — moslik uchun saqlangan
+LIGHT_MODEL = "claude-haiku-4-5-20251001"  # endi ishlatilmaydi -- moslik uchun saqlangan
+INTENT_MODEL = LIGHT_MODEL  # eski nom -- moslik uchun saqlangan
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 
-# OpenAI — YENGIL so'rovlar (intent aniqlash, metrika savoliga javob, oddiy
-# suhbat, byudjet xabarini tushunish) uchun. `OPENAI_API_KEY` sozlangan bo'lsa
-# shu ishlatiladi (odatda Claude Haiku'dan ham arzonroq); sozlanmagan bo'lsa
-# avvalgidek Claude Haiku (`LIGHT_MODEL`)ga avtomatik tushib qoladi — hech
-# narsa buzilmaydi. HAQIQIY qaror/vazifa (Targetolog/Marketolog action_plan,
-# `_call_agent` orqali) doim Claude Sonnet'da qoladi — bu ataylab
-# o'zgartirilmagan, chunki bilim bazasiga chuqur tayanadigan qaror uchun
-# arzon model xato qilishi mumkin.
+# OpenAI -- YENGIL so'rovlarning YAGONA manbasi (intent aniqlash, metrika
+# savoliga javob, davr/sana aniqlash, oddiy suhbat, byudjet xabarini
+# tushunish, kunlik hisobotlar). Fallback yo'q -- OPENAI_API_KEY majburiy
+# sozlanishi kerak, aks holda shu yo'nalishdagi so'rovlar xato beradi.
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
 
 def call_light(system_prompt: str, user_content: str, max_tokens: int = 500) -> str:
     """Bitta-turli (single-turn) YENGIL chaqiruv: intent aniqlash, byudjet
-    xabarini tushunish, metrika savoliga javob berish shu orqali ishlaydi.
-    `OPENAI_API_KEY` bo'lsa OpenAI, bo'lmasa yoki OpenAI so'rovi xato bersa
-    Claude Haiku ishlatiladi (fallback, hech qachon butunlay to'xtab
-    qolmasligi uchun)."""
+    xabarini tushunish, metrika savoliga javob berish, kunlik hisobotlar --
+    shularning barchasi FAQAT OpenAI orqali ishlaydi (Anthropic API
+    xarajatini yengil/oddiy so'rovlarda sarflamaslik uchun, ataylab qilingan
+    qaror). `OPENAI_API_KEY` sozlanmagan yoki OpenAI so'rovi xato bersa --
+    Claude'ga tushib qolinmaydi, xato yuqoriga uzatiladi (chaqiruvchi
+    funksiya buni ushlab, foydalanuvchiga tushunarli xabar ko'rsatadi)."""
     openai_key = os.environ.get("OPENAI_API_KEY")
-    if openai_key:
-        try:
-            return _call_openai(openai_key, system_prompt, [{"role": "user", "content": user_content}], max_tokens)
-        except Exception:
-            logger.exception("OpenAI so'roviga ulanishda xato — Claude Haiku'ga o'tildi")
-    response = client.messages.create(
-        model=LIGHT_MODEL,
-        max_tokens=max_tokens,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_content}],
-    )
-    return response.content[0].text
+    if not openai_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY sozlanmagan -- yengil so'rovlar (metrika/intent/"
+            "byudjet/hisobot) faqat OpenAI orqali ishlaydi, Anthropic'ga "
+            "tushib qolinmaydi."
+        )
+    return _call_openai(openai_key, system_prompt, [{"role": "user", "content": user_content}], max_tokens)
 
 
 def call_light_chat(system_prompt: str, messages: list[dict], max_tokens: int = 1000) -> str:
     """`call_light()`ga o'xshaydi, lekin ko'p-turli (multi-turn) suhbat
-    tarixi (`messages`, {"role", "content"} ro'yxati) bilan ishlaydi —
-    erkin/umumiy suhbat rejimida (hisobga tegmaydigan savol-javob) ishlatiladi."""
+    tarixi (`messages`, {"role", "content"} ro'yxati) bilan ishlaydi --
+    erkin/umumiy suhbat rejimida ishlatiladi. FAQAT OpenAI -- Claude'ga
+    fallback yo'q (Anthropic API faqat haqiqiy qaror/tavsiya beradigan
+    vazifalar -- Targetolog/Marketolog action_plan -- uchun saqlanadi)."""
     openai_key = os.environ.get("OPENAI_API_KEY")
-    if openai_key:
-        try:
-            return _call_openai(openai_key, system_prompt, messages, max_tokens)
-        except Exception:
-            logger.exception("OpenAI so'roviga ulanishda xato — Claude Haiku'ga o'tildi")
-    response = client.messages.create(
-        model=LIGHT_MODEL,
-        max_tokens=max_tokens,
-        system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
-        messages=messages,
-    )
-    return response.content[0].text
+    if not openai_key:
+        raise RuntimeError(
+            "OPENAI_API_KEY sozlanmagan -- erkin suhbat ham faqat OpenAI "
+            "orqali ishlaydi."
+        )
+    return _call_openai(openai_key, system_prompt, messages, max_tokens)
+
 
 
 def _call_openai(api_key: str, system_prompt: str, messages: list[dict], max_tokens: int) -> str:
@@ -728,6 +724,7 @@ def classify_intent(
             "keldi', 'bugun qanday ketyapti' kabi. Bunday umumiy so'rovlarda ham javob "
             "REAL Meta ma'lumotidan (lead soni, xarajat, CPL va h.k.) tuzilishi kerak -- "
             "GENERAL emas, chunki foydalanuvchi maslahat emas, HAQIQIY raqam kutmoqda.\n"
+            "(3) foydalanuvchi ANIQ bir kun/sana yoki oraliq haqida so'raganda (masalan '20 iyulni bergin', '1-10 avgust qancha ketdi') -- bu ham METRIC, javob shu ANIQ davr uchun bo'lishi kerak, standart 7 kun EMAS. VA (4) foydalanuvchi 'rejalashtirilgan', 'tayyor turgan', 'pauzadagi', 'hali yoqilmagan', 'to'xtatilgan' targetlar/kampaniyalar haqida so'raganda (masalan 'rejalashtirilgan targetlar bormi', 'qaysi target pauzada') -- bu ham METRIC (hisob tuzilmasi/status ma'lumotidan javob beriladi), ACTION yoki GENERAL EMAS.\n"
             "GENERAL -- FAQAT hisobning joriy holati/raqamlari SO'RALMAGAN, sof bilim/"
             "maslahat savoli bo'lsa (masalan 'CBO nima', 'byudjetni qachon oshirish kerak', "
             "'yaxshi kreativ qanday bo'ladi'). Agar xabarda 'ma'lumot', 'hisobot', 'statistika', "
@@ -889,52 +886,104 @@ def _run_pipeline_command(user_text: str, history_text: str) -> str:
     return text
 
 
-# "Bugun/hozir" so'zlari bo'lsa BUGUNGI kunning o'zi (date_preset="today"),
-# aks holda standart so'nggi 7 kunlik ma'lumot ishlatiladi. Bu aynan
-# "bugungi ma'lumotlarni ber" kabi so'rovlarga TO'G'RI davr uchun (7 kun
-# emas, faqat bugun) real raqam qaytarish uchun muhim.
-_TODAY_KEYWORDS = re.compile(r"bugun|hozir|shu kun", re.IGNORECASE)
+def _resolve_query_period(user_text: str) -> tuple[dict, str]:
+    """Foydalanuvchi so'ragan davrni aniqlaydi -- "bugun", "20 iyul", "1-10
+    avgust" kabi ANIQ sana/oraliq aytilgan bo'lsa, arzon model orqali shuni
+    ANIQ time_range (since/until)ga o'giradi. Hech qanday davr aytilmagan
+    bo'lsa, standart so'nggi 7 kunga tushadi.
+
+    Qaytaradi: `(meta_api.get_insights ga beriladigan kwargs, odam o'qiydigan
+    davr nomi)` -- masalan `({"date_preset": "today"}, "bugungi kun")` yoki
+    `({"time_range": {"since": "2026-07-20", "until": "2026-07-20"}}, "20.07.2026")`."""
+    today_iso = datetime.utcnow().date().isoformat()
+    extraction = call_light(
+        f"Bugungi sana: {today_iso} (YYYY-MM-DD). Foydalanuvchi xabaridan aniq QAYSI "
+        "SANA yoki DAVR haqida so'rayotganini aniqla. Faqat JSON qaytar: "
+        '{"since": "YYYY-MM-DD" yoki null, "until": "YYYY-MM-DD" yoki null, '
+        '"label": "odam o\'qiydigan qisqa nom (masalan \'20.07.2026\' yoki \'bugungi kun\')"}'
+        '. Agar xabarda "bugun"/"hozir" bo\'lsa: since=until=bugungi sana. Agar aniq bitta '
+        'sana aytilgan bo\'lsa (masalan "20 iyul"), yil ko\'rsatilmagan bo\'lsa joriy yildan '
+        'hisobla (agar shu sana kelajakda chiqib qolsa, o\'tgan yildan ol); since=until=o\'sha '
+        'sana. Agar oraliq aytilgan bo\'lsa ("1-10 avgust"), since/until shunga mos. Agar '
+        'hech qanday aniq sana/davr aytilmagan bo\'lsa, since=null, until=null, '
+        'label="so\'nggi 7 kun" qaytar. Faqat JSON, boshqa matn yo\'q.',
+        user_text,
+        max_tokens=80,
+    )
+    text = extraction.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = {}
+
+    since = parsed.get("since")
+    until = parsed.get("until")
+    label = parsed.get("label") or "so'nggi 7 kun"
+    if since and until:
+        return {"time_range": {"since": since, "until": until}}, label
+    return {"date_preset": "last_7d"}, label
 
 
 def answer_data_question(user_text: str, history_text: str = "") -> str:
-    """Foydalanuvchi hisobdagi aniq metrika/raqamni yoki umumiy joriy holatni
-    so'raganda (masalan: 'video necha kishi ko'rgan', 'CPA qancha', 'bugungi
-    ma'lumotlarni ber', 'necha lead keldi') chaqiriladi. Meta API'dan (video
-    metrikalari bilan birga) real ma'lumotni tortib, faqat SHU raqamlar
-    asosida — o'ylab topmasdan — javob beradi. Bu action emas, faqat
-    hisobot, shuning uchun Marketolog tekshiruvidan o'tmaydi (hisobga hech
-    narsa o'zgartirilmaydi)."""
-    date_preset = "today" if _TODAY_KEYWORDS.search(user_text) else "last_7d"
-    period_label = "BUGUNGI kun" if date_preset == "today" else "so'nggi 7 kun"
+    """Foydalanuvchi hisobdagi aniq metrika/raqamni, umumiy joriy holatni,
+    yoki REJALASHTIRILGAN/PAUZADAGI (hali yoqilmagan/o'chirilgan) targetlar
+    haqida so'raganda (masalan: 'CPA qancha', 'bugungi ma'lumotlarni ber',
+    '20 iyulni bergin', 'rejalashtirilgan targetlar bormi') chaqiriladi.
+    Meta API'dan real ma'lumotni (statistika VA hisob tuzilmasi/status) tortib,
+    faqat SHU ma'lumot asosida -- o'ylab topmasdan -- javob beradi. Bu action
+    emas, faqat hisobot, shuning uchun Marketolog tekshiruvidan o'tmaydi
+    (hisobga hech narsa o'zgartirilmaydi)."""
+    insight_kwargs, period_label = _resolve_query_period(user_text)
     try:
-        report_data = meta_api.get_full_report(level="ad", date_preset=date_preset)
+        report_data = meta_api.get_full_report(level="ad", **insight_kwargs)
     except meta_api.MetaAPIError as e:
         return f"⚠️ Meta API'dan ma'lumot olishda xatolik: {e}"
+
+    # Hisob tuzilmasi (status bilan) -- "rejalashtirilgan/tayyor/pauzadagi
+    # targetlar bormi" kabi savollarga javob berish uchun kerak, chunki
+    # PAUZADAGI (hali yoqilmagan) kampaniyalar ko'pincha `insights`da UMUMAN
+    # ko'rinmaydi (chunki ularda hozircha xarajat/natija yo'q).
+    try:
+        account_structure = meta_api.get_account_structure(active_only=False)
+        structure_json = json.dumps(account_structure, ensure_ascii=False, indent=2)
+    except meta_api.MetaAPIError as e:
+        structure_json = f"(hisob tuzilmasi olinmadi: {e})"
 
     data_json = json.dumps(report_data, ensure_ascii=False, indent=2)
     data_qa_system = (
         f"{TARGETOLOG_ROLE}\n\n---\n\n# BILIM BAZASI\n\n{KNOWLEDGE_BASE}\n\n---\n\n"
         "MUHIM: Bu safar sendan action_plan JSON EMAS, oddiy o'zbekcha matn "
-        "javob kutilyapti. Foydalanuvchi hisobdagi aniq metrika/raqamni YOKI "
-        "umumiy joriy holatni (masalan 'ma'lumot ber', 'hisobot ber') "
-        f"so'ramoqda. Senga berilgan ma'lumot {period_label}ga tegishli -- "
-        "javobingda buni aniq ayt (masalan 'Bugun ...' yoki 'So'nggi 7 kunda ...'). "
-        "Faqat senga berilgan haqiqiy `insights` ma'lumotlaridan foydalanib javob "
-        "ber (masalan foiz hisoblash: video_thruplay_watched_actions / "
-        "video_play_actions * 100; lead soni odatda `actions` ichida "
-        "action_type='lead' yoki 'onsite_conversion.lead_grouped' kabi nomlar "
-        "bilan keladi -- shulardan yig'ib ber). Agar foydalanuvchi 'hammasini "
-        "ber' desa, kamida: lead/natija soni, xarajat (spend), va CPL/CPA "
-        "(spend / lead soni) ni albatta qo'sh. Agar kerakli maydon ma'lumotda "
-        "umuman yo'q bo'lsa (masalan SMS alohida kuzatilmasa), buni ochiq "
-        "ayt, o'ylab topma. Javobni Telegram uchun qisqa va tushunarli qil, "
-        "kerak bo'lsa ad/adset nomlari bo'yicha alohida ko'rsat."
+        "javob kutilyapti. Foydalanuvchi hisobdagi aniq metrika/raqamni, umumiy "
+        "joriy holatni, YOKI rejalashtirilgan/tayyor/pauzadagi (hali yoqilmagan "
+        "yoki o'chirilgan) targetlar haqida so'ramoqda.\n\n"
+        f"Senga berilgan `ad_insights` ma'lumoti {period_label}ga tegishli -- "
+        "javobingda buni aniq ayt. Faqat haqiqiy `ad_insights` ma'lumotidan "
+        "foydalanib javob ber (masalan foiz hisoblash: video_thruplay_watched_actions "
+        "/ video_play_actions * 100; lead soni odatda `actions` ichida "
+        "action_type='lead' yoki 'onsite_conversion.lead_grouped' kabi nomlar bilan "
+        "keladi -- shulardan yig'ib ber). Agar foydalanuvchi 'hammasini ber' desa, "
+        "kamida: lead/natija soni, xarajat (spend), va CPL/CPA (spend / lead soni) "
+        "ni albatta qo'sh.\n\n"
+        "Agar savol 'rejalashtirilgan', 'tayyor', 'pauzadagi', 'hali yoqilmagan' "
+        "targetlar haqida bo'lsa -- `account_structure` ma'lumotidan (campaigns/"
+        "adsets/ads, har birining `status` maydoni bilan) PAUSED holatidagilarni "
+        "nom (+ID, kerak bo'lsa) bilan ro'yxat qilib ber. Agar PAUSED obyekt "
+        "umuman topilmasa, buni ochiq ayt ('hozircha pauzadagi/rejalashtirilgan "
+        "target yo'q').\n\n"
+        "Agar kerakli maydon ma'lumotda umuman yo'q bo'lsa (masalan SMS alohida "
+        "kuzatilmasa), buni ochiq ayt, o'ylab topma. Javobni Telegram uchun qisqa "
+        "va tushunarli qil, kerak bo'lsa ad/adset nomlari bo'yicha alohida ko'rsat."
     )
     answer = call_light(
         data_qa_system,
         f"{history_text}\n\nSavol: \"{user_text}\"\n\n"
-        f"So'nggi 7 kunlik reklama ma'lumotlari (ad darajasida):\n{data_json}",
-        max_tokens=800,
+        f"ad_insights ({period_label}):\n{data_json}\n\n"
+        f"account_structure (barcha kampaniya/adset/ad, status bilan):\n{structure_json}",
+        max_tokens=900,
     )
     return answer
 

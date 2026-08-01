@@ -101,18 +101,25 @@ def get_insights(
     date_preset: str = "last_7d",
     breakdowns: list[str] | None = None,   # masalan ["region"]
     fields: list[str] | None = None,
+    time_range: dict | None = None,   # {"since": "YYYY-MM-DD", "until": "YYYY-MM-DD"}
 ) -> list[dict]:
     """Kampaniya/adset/ad darajasidagi statistikani qaytaradi.
 
     `breakdowns=["region"]` bersangiz — lidlar/xarajat qaysi hududdan
     kelayotganini ko'rish mumkin (4.11-bo'lim: hudud muammosini aniqlash uchun).
-    """
+
+    `time_range` berilsa (masalan foydalanuvchi aniq bir kun yoki oraliq
+    so'raganda -- "20 iyul", "1-10 avgust"), u `date_preset`dan USTUN turadi
+    va aynan o'sha sanalar oralig'idagi ma'lumot qaytariladi."""
     params = {
         "level": level,
-        "date_preset": date_preset,
         "fields": ",".join(fields or DEFAULT_FIELDS),
         "limit": 200,
     }
+    if time_range:
+        params["time_range"] = time_range  # _get avtomatik JSON'ga o'giradi
+    else:
+        params["date_preset"] = date_preset
     if breakdowns:
         params["breakdowns"] = ",".join(breakdowns)
     data = _get(f"{AD_ACCOUNT_ID}/insights", params)
@@ -151,11 +158,16 @@ def get_full_report(
     level: str = "ad",
     date_preset: str = "last_7d",
     breakdowns: list[str] | None = None,
+    time_range: dict | None = None,
 ) -> list[dict]:
     """`get_insights()` bilan bir xil, lekin video/engagement metrikalarini ham
     qo'shib qaytaradi. Foydalanuvchi "video necha % odam ko'rgan", "hook rate
-    qancha" kabi aniq metrika so'raganda ishlatiladi (orchestrator.answer_data_question)."""
-    return get_insights(level=level, date_preset=date_preset, breakdowns=breakdowns, fields=FULL_REPORTING_FIELDS)
+    qancha", yoki aniq bir kun/oraliq ("20 iyul", "1-10 avgust") so'raganda
+    ishlatiladi (orchestrator.answer_data_question)."""
+    return get_insights(
+        level=level, date_preset=date_preset, breakdowns=breakdowns,
+        fields=FULL_REPORTING_FIELDS, time_range=time_range,
+    )
 
 
 def get_active_ads(adset_id: str | None = None) -> list[dict]:

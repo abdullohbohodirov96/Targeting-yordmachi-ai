@@ -224,26 +224,45 @@ def _trigger_async_processing(payload: dict) -> bool:
     KUTMAYDI (juda qisqa timeout).
 
     NEGA SHUNDAY: Vercel har bir kiruvchi so'rovni qabul qilgach, uni to'liq
-    qayta ishlaydi — chaqiruvchi javobni kutayaptimi yo'qmi, bunga bog'liq
+    qayta ishlaydi -- chaqiruvchi javobni kutayaptimi yo'qmi, bunga bog'liq
     emas. Shuning uchun bu yerdan qisqa (0.5s) timeout bilan so'rov yuborib,
     javobni kutmasdan darhol qaytish xavfsiz: `/api/process-action` YANGI,
     alohida Vercel funksiya chaqiruvi sifatida ishga tushadi va o'zining
-    TO'LIQ 60 soniyalik vaqtiga ega bo'ladi — joriy webhook so'rovi esa
+    TO'LIQ 60 soniyalik vaqtiga ega bo'ladi -- joriy webhook so'rovi esa
     Telegram'ga DARHOL 200 OK qaytarib, hech qachon Vercel'ning
-    FUNCTION_INVOCATION_TIMEOUT xatosiga urilib qolmaydi."""
+    FUNCTION_INVOCATION_TIMEOUT xatosiga urilib qolmaydi.
+
+    MUHIM (ilgari shu yerda XATOLIK bor edi -- botning "target tahlil"ga
+    umuman javob bermay qolishiga sababchi bo'lgan): agar `CRON_SECRET`
+    Vercel'da sozlanmagan bo'lsa yoki ichki so'rov 401/xato status bilan
+    JUDA TEZ qaytsa (timeout bo'lmasdan), avvalgi versiya buni "muvaffaqiyatli
+    yuborildi" deb noto'g'ri hisoblardi -- natijada foydalanuvchi "Qabul
+    qildim" xabarini olardi-yu, natija HECH QACHON kelmasdi (chunki
+    `/api/process-action` ichkariga umuman kirmay, 401 bilan darhol rad
+    etardi). Endi status kodi ANIQ tekshiriladi va CRON_SECRET yo'qligi
+    OLDINDAN aniqlanadi -- shu holatlarda `False` qaytariladi, chaqiruvchi
+    esa (`handle_free_text`) buni ko'rib ISHNI SHU YERNING O'ZIDA (sinxron)
+    bajarishga qaytadi -- hech qachon "jim qolib ketish" bo'lmasligi uchun."""
+    if not CRON_SECRET:
+        logger.error("CRON_SECRET sozlanmagan -- fon so'rov ishga tushirilmaydi, sinxron rejimga qaytiladi")
+        return False
+
     import requests
     url = f"{_self_base_url()}/api/process-action"
     try:
-        requests.post(
+        resp = requests.post(
             url,
             json=payload,
             headers={"Authorization": f"Bearer {CRON_SECRET}"},
             timeout=0.5,
         )
-        return True
+        if 200 <= resp.status_code < 300:
+            return True
+        logger.error("Fon so'rovi kutilmagan status bilan qaytdi: %s %s", resp.status_code, resp.text[:300])
+        return False
     except requests.exceptions.Timeout:
         # KUTILGAN holat: so'rov haqiqatan yuborildi, biz shunchaki javobni
-        # kutmadik — fon ishga tushirish muvaffaqiyatli hisoblanadi.
+        # kutmadik -- fon ishga tushirish muvaffaqiyatli hisoblanadi.
         return True
     except requests.exceptions.RequestException:
         logger.exception("Fon so'rovini yuborib bo'lmadi")
@@ -268,10 +287,10 @@ def handle_free_text(chat_id: int, user_text: str) -> None:
 
     if orchestrator.is_heavy_intent(verdict):
         # OG'IR YO'L (ACTION/ANALYSIS): Meta API + Claude Sonnet zanjiri bir
-        # necha o'n soniya cho'zilishi mumkin — buni HOZIRGI so'rovda EMAS,
-        # `/api/process-action` fon so'roviga uzatamiz (yuqoridagi izohga
-        # qarang). Foydalanuvchiga darhol ishonch xabari beriladi, natija esa
-        # fon ishi tugagach alohida xabar sifatida keladi.
+        # necha o'n soniya cho'zilishi mumkin -- buni HOZIRGI so'rovda EMAS,
+        # `/api/process-action` fon so'roviga uzatishga urinamiz (yuqoridagi
+        # izohga qarang). Foydalanuvchiga darhol ishonch xabari beriladi,
+        # natija esa fon ishi tugagach alohida xabar sifatida keladi.
         tg_delete(chat_id, status_id)
         history.append({"role": "user", "content": user_text})
         save_history(chat_id, history)
@@ -287,8 +306,33 @@ def handle_free_text(chat_id: int, user_text: str) -> None:
                 "⏳ Qabul qildim, ishlab chiqyapman — tayyor bo'lganda o'zim yozaman "
                 "(bir necha o'n soniya ketishi mumkin).",
             )
-        else:
-            tg_send(chat_id, "⚠️ Ichki xatolik: fon ishga tushirilmadi, qaytadan urinib ko'ring.")
+            return
+
+        # MUHIM: fon so'rovi ishga tushmadi (masalan CRON_SECRET sozlanmagan
+        # yoki ichki so'rov xato qaytardi) -- bu holatda AVVALGI (sinxron)
+        # usulga qaytamiz, hech qachon foydalanuvchini JAVOBSIZ qoldirmaslik
+        # uchun. Bu Vercel'ning 60 soniyalik limitiga urilib qolish xavfini
+        # qaytaradi (murakkab buyruqlarda), lekin "umuman javob kelmaslik"dan
+        # ancha yaxshi -- va aksariyat holatda (oddiyroq buyruqlar) baribir
+        # vaqtida tugaydi.
+        logger.warning("Fon so'rov ishlamadi -- %s buyrug'i sinxron rejimda bajarilyapti", verdict)
+        tg_send(chat_id, "⏳ Fon rejimi hozircha sozlanmagan, shu yerning o'zida bajarayapman...")
+        try:
+            command_result = orchestrator.execute_intent(verdict, user_text, history_text, chat_id)
+        except Exception as e:
+            logger.exception("execute_intent xatosi (sinxron fallback)")
+            tg_send(
+                chat_id,
+                f"⚠️ Buyruqni bajarishda kutilmagan xatolik yuz berdi: {e}\n\n"
+                "Qaytadan urinib ko'ring yoki aniqroq yozing.",
+            )
+            return
+        if command_result is None:
+            command_result = "Tushunmadim, aniqroq yozib qayta yuboring."
+        history.append({"role": "assistant", "content": command_result})
+        save_history(chat_id, history)
+        save_last_report(chat_id, command_result)
+        tg_send(chat_id, command_result)
         return
 
     # YENGIL YO'L (BUDGET / METRIC / GENERAL) — bitta arzon model chaqiruvi,

@@ -48,9 +48,16 @@ to'g'ridan-to'g'ri ijro etiladi. Xavfsizlikni qaytarish uchun `false` qiling.
 
 **Xarajatni balanslash (model tanlash):** har bir so'rovga qimmat model
 ishlatilmaydi. Sonnet (`MODEL`) faqat HAQIQIY qaror/vazifa yaratilganda
-(Targetolog action_plan, Marketolog tekshiruvi) ishlatiladi. Oddiy narsalar —
-intent aniqlash, metrika savoliga real raqam bilan javob berish, byudjet
-deposit/savoli, erkin suhbat — arzon `LIGHT_MODEL` (Haiku) orqali bajariladi.
+(Targetolog action_plan, Marketolog tekshiruvi) ishlatiladi -- bu hech qachon
+o'zgarmaydi, chunki bilim bazasiga chuqur tayanadigan qaror uchun arzon model
+xato qilishi mumkin. Oddiy narsalar -- intent aniqlash ("bu ACTION mi, oddiy
+savolmi"), "qaysi target yoqilgan", "CPA/xarajat qancha" kabi metrika
+savoliga real raqam bilan javob berish, byudjet deposit/savoli, erkin suhbat
+-- arzon model orqali bajariladi: `OPENAI_API_KEY` sozlangan bo'lsa OpenAI
+(`OPENAI_MODEL`, standart `gpt-4o-mini`), sozlanmagan bo'lsa Claude Haiku
+(`LIGHT_MODEL`) -- ikkalasi ham ishlamasa (masalan OpenAI vaqtinchalik
+ishlamay qolsa) avtomatik Claude Haiku'ga qaytadi, hech qachon butunlay
+javobsiz qolmaydi.
 
 Har bir ijro natijasi (muvaffaqiyatli/xato) Telegram hisobotida aniq ko'rsatiladi
 — agar Meta biror action'ni rad etsa (masalan "audience invalid"), bu Telegramda
@@ -127,7 +134,9 @@ pip install "python-telegram-bot[job-queue]" anthropic requests
 | O'zgaruvchi | Qayerdan olinadi |
 |---|---|
 | `TELEGRAM_BOT_TOKEN` | @BotFather |
-| `ANTHROPIC_API_KEY` | console.anthropic.com |
+| `ANTHROPIC_API_KEY` | console.anthropic.com -- Targetolog/Marketolog HAQIQIY qaror/vazifa yaratganda doim shu (Claude Sonnet) ishlatiladi |
+| `OPENAI_API_KEY` (ixtiyoriy) | platform.openai.com -- sozlansa, YENGIL so'rovlar (intent aniqlash, "qaysi target yoqilgan/CPA qancha" kabi metrika savoli, erkin suhbat, byudjet xabari) ANTHROPIC_API_KEY o'rniga shu orqali bajariladi. Sozlanmasa avvalgidek Claude Haiku ishlatiladi. |
+| `OPENAI_MODEL` (ixtiyoriy) | standart `gpt-4o-mini` |
 | `META_ACCESS_TOKEN` | Business Manager -> System Users -> Generate Token (`ads_management`, `ads_read`, `leads_retrieval`, `pages_read_engagement`) |
 | `META_AD_ACCOUNT_ID` | Ads Manager'dagi hisob ID (`act_...` formatida) |
 

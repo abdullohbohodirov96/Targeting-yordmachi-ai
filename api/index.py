@@ -318,15 +318,9 @@ def handle_free_text(chat_id: int, user_text: str) -> None:
     # Oddiy maslahat/Q&A rejimi (hisobga tegilmaydi) — GENERAL
     history.append({"role": "user", "content": user_text})
     try:
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=1000,
-            system=[{"type": "text", "text": KNOWLEDGE_BASE, "cache_control": {"type": "ephemeral"}}],
-            messages=history,
-        )
-        answer = response.content[0].text
+        answer = orchestrator.call_light_chat(KNOWLEDGE_BASE, history, max_tokens=1000)
     except Exception as e:
-        logger.exception("Claude API xatosi")
+        logger.exception("Yengil model xatosi (GENERAL suhbat)")
         answer = f"⚠️ Xatolik yuz berdi: {e}"
 
     tg_delete(chat_id, status_id)

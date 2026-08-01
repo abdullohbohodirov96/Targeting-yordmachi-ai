@@ -27,6 +27,7 @@ from pathlib import Path
 from datetime import datetime
 
 import anthropic
+import requests
 
 import meta_api
 import budget_tracker
@@ -78,6 +79,69 @@ MODEL = "claude-sonnet-4-5"
 LIGHT_MODEL = "claude-haiku-4-5-20251001"
 INTENT_MODEL = LIGHT_MODEL  # eski nom — moslik uchun saqlangan
 client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+
+# OpenAI — YENGIL so'rovlar (intent aniqlash, metrika savoliga javob, oddiy
+# suhbat, byudjet xabarini tushunish) uchun. `OPENAI_API_KEY` sozlangan bo'lsa
+# shu ishlatiladi (odatda Claude Haiku'dan ham arzonroq); sozlanmagan bo'lsa
+# avvalgidek Claude Haiku (`LIGHT_MODEL`)ga avtomatik tushib qoladi — hech
+# narsa buzilmaydi. HAQIQIY qaror/vazifa (Targetolog/Marketolog action_plan,
+# `_call_agent` orqali) doim Claude Sonnet'da qoladi — bu ataylab
+# o'zgartirilmagan, chunki bilim bazasiga chuqur tayanadigan qaror uchun
+# arzon model xato qilishi mumkin.
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+
+
+def call_light(system_prompt: str, user_content: str, max_tokens: int = 500) -> str:
+    """Bitta-turli (single-turn) YENGIL chaqiruv: intent aniqlash, byudjet
+    xabarini tushunish, metrika savoliga javob berish shu orqali ishlaydi.
+    `OPENAI_API_KEY` bo'lsa OpenAI, bo'lmasa yoki OpenAI so'rovi xato bersa
+    Claude Haiku ishlatiladi (fallback, hech qachon butunlay to'xtab
+    qolmasligi uchun)."""
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            return _call_openai(openai_key, system_prompt, [{"role": "user", "content": user_content}], max_tokens)
+        except Exception:
+            logger.exception("OpenAI so'roviga ulanishda xato — Claude Haiku'ga o'tildi")
+    response = client.messages.create(
+        model=LIGHT_MODEL,
+        max_tokens=max_tokens,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    return response.content[0].text
+
+
+def call_light_chat(system_prompt: str, messages: list[dict], max_tokens: int = 1000) -> str:
+    """`call_light()`ga o'xshaydi, lekin ko'p-turli (multi-turn) suhbat
+    tarixi (`messages`, {"role", "content"} ro'yxati) bilan ishlaydi —
+    erkin/umumiy suhbat rejimida (hisobga tegmaydigan savol-javob) ishlatiladi."""
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    if openai_key:
+        try:
+            return _call_openai(openai_key, system_prompt, messages, max_tokens)
+        except Exception:
+            logger.exception("OpenAI so'roviga ulanishda xato — Claude Haiku'ga o'tildi")
+    response = client.messages.create(
+        model=LIGHT_MODEL,
+        max_tokens=max_tokens,
+        system=[{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
+        messages=messages,
+    )
+    return response.content[0].text
+
+
+def _call_openai(api_key: str, system_prompt: str, messages: list[dict], max_tokens: int) -> str:
+    full_messages = [{"role": "system", "content": system_prompt}] + list(messages)
+    resp = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        json={"model": OPENAI_MODEL, "temperature": 0, "max_tokens": max_tokens, "messages": full_messages},
+        timeout=20,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data["choices"][0]["message"]["content"]
 
 # Har bir action_plan tipi -> uni haqiqiy hisobda bajaradigan funksiya
 ACTION_EXECUTORS = {
@@ -570,21 +634,17 @@ def handle_budget_message(user_text: str, chat_id: int) -> str:
     summa ekanini aniqlaydi, keyin haqiqiy hisob-kitobni `budget_tracker.py`
     (Meta'dan olingan REAL xarajat asosida) bajaradi — model o'zi raqam
     o'ylab topmaydi, faqat matnni tushunadi."""
-    extraction = client.messages.create(
-        model=LIGHT_MODEL,
+    text = call_light(
+        "Foydalanuvchi reklama byudjeti/puli haqida yozmoqda. Faqat JSON "
+        'qaytar: {"type": "deposit" yoki "query", "amount": <deposit bo\'lsa '
+        "dollar miqdori (raqam), aks holda null>}. Masalan: "
+        "'bugun 500$ tushdi' -> {\"type\":\"deposit\",\"amount\":500}. "
+        "'gruppaga 200 dollar tashladim' -> {\"type\":\"deposit\",\"amount\":200}. "
+        "'qancha qoldi', 'qachon tugaydi', '$100 qolganda ayt' -> "
+        '{"type":"query","amount":null}. Faqat JSON qaytar, boshqa matn yo\'q.',
+        user_text,
         max_tokens=60,
-        system=(
-            "Foydalanuvchi reklama byudjeti/puli haqida yozmoqda. Faqat JSON "
-            'qaytar: {"type": "deposit" yoki "query", "amount": <deposit bo\'lsa '
-            "dollar miqdori (raqam), aks holda null>}. Masalan: "
-            "'bugun 500$ tushdi' -> {\"type\":\"deposit\",\"amount\":500}. "
-            "'gruppaga 200 dollar tashladim' -> {\"type\":\"deposit\",\"amount\":200}. "
-            "'qancha qoldi', 'qachon tugaydi', '$100 qolganda ayt' -> "
-            '{"type":"query","amount":null}. Faqat JSON qaytar, boshqa matn yo\'q.'
-        ),
-        messages=[{"role": "user", "content": user_text}],
-    )
-    text = extraction.content[0].text.strip()
+    ).strip()
     if text.startswith("```"):
         text = text.split("```")[1]
         if text.startswith("json"):
@@ -629,10 +689,8 @@ def classify_intent(
             f"{m['role']}: {m['content']}" for m in recent_history[-6:]
         )
 
-    intent_check = client.messages.create(
-        model=INTENT_MODEL,
-        max_tokens=20,
-        system=(
+    verdict = call_light(
+        (
             "Foydalanuvchi xabari qaysi turga kiradi? Faqat bitta so'z bilan javob ber:\n"
             "BUDGET -- agar reklama HISOB BALANSI/PULI haqida bo'lsa: hisobga pul "
             "tushirilgani haqida xabar (masalan 'bugun 500$ tushdi', 'gruppaga 200 "
@@ -657,9 +715,9 @@ def classify_intent(
             "GENERAL -- agar bu shunchaki umumiy savol/maslahat so'rovi bo'lsa (hisobga "
             "tegishli aniq raqam so'ralmagan)."
         ),
-        messages=[{"role": "user", "content": f"{history_text}\n\nYangi xabar: {user_text}"}],
-    )
-    verdict = intent_check.content[0].text.strip().upper()
+        f"{history_text}\n\nYangi xabar: {user_text}",
+        max_tokens=20,
+    ).strip().upper()
     return verdict, history_text
 
 
@@ -836,24 +894,13 @@ def answer_data_question(user_text: str, history_text: str = "") -> str:
         "Javobni Telegram uchun qisqa va tushunarli qil, kerak bo'lsa ad/adset "
         "nomlari bo'yicha alohida ko'rsat."
     )
-    response = client.messages.create(
-        # MUHIM: bu yerda faqat berilgan raqamlarni o'qib, oddiy tilda
-        # qaytarish kerak — real qaror/action_plan yaratilmaydi. Shuning
-        # uchun qimmat Sonnet emas, arzon LIGHT_MODEL (Haiku) yetarli.
-        model=LIGHT_MODEL,
-        max_tokens=800,  # xarajatni cheklash uchun kamaytirildi
-        # cache_control — xuddi _call_agent'dagi kabi, statik qismini keshlab
-        # xarajatni kamaytiradi.
-        system=[{"type": "text", "text": data_qa_system, "cache_control": {"type": "ephemeral"}}],
-        messages=[{
-            "role": "user",
-            "content": (
-                f"{history_text}\n\nSavol: \"{user_text}\"\n\n"
-                f"So'nggi 7 kunlik reklama ma'lumotlari (ad darajasida):\n{data_json}"
-            ),
-        }],
+    answer = call_light(
+        data_qa_system,
+        f"{history_text}\n\nSavol: \"{user_text}\"\n\n"
+        f"So'nggi 7 kunlik reklama ma'lumotlari (ad darajasida):\n{data_json}",
+        max_tokens=800,
     )
-    return response.content[0].text
+    return answer
 
 
 if __name__ == "__main__":

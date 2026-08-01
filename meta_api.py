@@ -22,6 +22,7 @@ ESLATMA: Bu MVP kodi. Ishlab chiqarishga (production) chiqarishdan oldin:
 
 import os
 import json
+import concurrent.futures
 import requests
 
 GRAPH_API_VERSION = "v21.0"
@@ -189,9 +190,18 @@ def get_account_structure(active_only: bool = True) -> dict:
         adset_params["filtering"] = campaign_params["filtering"]
         ad_params["filtering"] = campaign_params["filtering"]
 
-    campaigns = _get(f"{AD_ACCOUNT_ID}/campaigns", campaign_params).get("data", [])
-    adsets = _get(f"{AD_ACCOUNT_ID}/adsets", adset_params).get("data", [])
-    ads = _get(f"{AD_ACCOUNT_ID}/ads", ad_params).get("data", [])
+    # Uch chaqiruv ham bir-biriga bog'liq emas -- ketma-ket emas, parallel
+    # (bir vaqtda) yuborib, umumiy kutish vaqtini ~3 baravar qisqartiramiz
+    # (Vercel'ning 60 soniyalik funksiya limitiga urilib qolish xavfini
+    # kamaytirish uchun muhim -- bu funksiya deyarli har bir amaliy buyruq
+    # oldidan chaqiriladi).
+    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+        campaigns_future = pool.submit(_get, f"{AD_ACCOUNT_ID}/campaigns", campaign_params)
+        adsets_future = pool.submit(_get, f"{AD_ACCOUNT_ID}/adsets", adset_params)
+        ads_future = pool.submit(_get, f"{AD_ACCOUNT_ID}/ads", ad_params)
+        campaigns = campaigns_future.result().get("data", [])
+        adsets = adsets_future.result().get("data", [])
+        ads = ads_future.result().get("data", [])
     return {"campaigns": campaigns, "adsets": adsets, "ads": ads}
 
 

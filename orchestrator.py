@@ -22,6 +22,7 @@ import os
 import re
 import json
 import logging
+import concurrent.futures
 from pathlib import Path
 from datetime import datetime
 
@@ -604,22 +605,23 @@ def handle_budget_message(user_text: str, chat_id: int) -> str:
     return budget_tracker.format_status_message(status)
 
 
-def handle_chat_command(
-    user_text: str, recent_history: list[dict] | None = None, chat_id: int | None = None
-) -> str | None:
-    """Foydalanuvchi Telegram'da erkin matn yozganda chaqiriladi. Avval bu matn
+def classify_intent(
+    user_text: str, recent_history: list[dict] | None = None
+) -> tuple[str, str]:
+    """Foydalanuvchi Telegram'da erkin matn yozganda chaqiriladi. Bu matn
     haqiqiy amaliy buyruqmi (masalan 'yangi target yoq', 'X reklamani to'xtat',
-    'abtest boshla') yoki oddiy savolmi — shuni aniqlaydi.
+    'abtest boshla') yoki oddiy savolmi -- shuni ARZON model (Haiku) bilan tez
+    aniqlaydi. Og'ir ishning o'zini BAJARMAYDI -- buni ataylab `execute_intent()`
+    ga ajratib qo'ydik, chunki Vercel webhook OG'IR (ACTION/ANALYSIS) va
+    YENGIL (BUDGET/METRIC/GENERAL) turlarni turlicha ishlatishi kerak (og'irini
+    fon so'rovga uzatib, Vercel'ning 60 soniyalik timeout'idan qochish uchun).
 
-    `recent_history` — suhbatning so'nggi xabarlari (agar Targetolog oldin
+    `recent_history` -- suhbatning so'nggi xabarlari (agar Targetolog oldin
     "byudjetingiz qancha?" deb so'ragan bo'lsa, keyingi "50000" degan javob
     shu kontekst bilan to'g'ri bog'lanishi uchun).
 
-    - Agar amaliy buyruq (yoki oldingi so'rovga davom) bo'lsa: to'liq
-      Targetolog -> Marketolog -> ijro zanjirini ishga tushirib, natija
-      hisobotini qaytaradi.
-    - Agar oddiy savol bo'lsa: `None` qaytaradi — telegram_bot.py bu holda
-      o'zining oddiy (faqat maslahat beruvchi) suhbat rejimidan foydalanadi.
+    Qaytaradi: `(verdict, history_text)` -- `history_text` ham qaytariladi,
+    chunki `execute_intent()` uni qayta hisoblamasligi kerak.
     """
     history_text = ""
     if recent_history:
@@ -632,33 +634,49 @@ def handle_chat_command(
         max_tokens=20,
         system=(
             "Foydalanuvchi xabari qaysi turga kiradi? Faqat bitta so'z bilan javob ber:\n"
-            "BUDGET — agar reklama HISOB BALANSI/PULI haqida bo'lsa: hisobga pul "
+            "BUDGET -- agar reklama HISOB BALANSI/PULI haqida bo'lsa: hisobga pul "
             "tushirilgani haqida xabar (masalan 'bugun 500$ tushdi', 'gruppaga 200 "
-            "dollar tashladim'), yoki shu pul qancha qolgani/qачон tugashi haqidagi "
+            "dollar tashladim'), yoki shu pul qancha qolgani/qachon tugashi haqidagi "
             "savol (masalan 'qancha qoldi', 'necha kunga yetadi', 'qachon tugaydi', "
             "'100$ qolganda ayt'). Bu ADS ACCOUNT balansi haqida, aniq bitta ad'ning "
             "CPA/CTR kabi ijro ko'rsatkichi haqida EMAS (u METRIC).\n"
-            "ANALYSIS — agar foydalanuvchi BUTUN hisobni yoki bir nechta kampaniyani "
+            "ANALYSIS -- agar foydalanuvchi BUTUN hisobni yoki bir nechta kampaniyani "
             "KENG QAMROVLI tahlil qilishni so'rasa (masalan: 'hisobimni tahlil qil', "
-            "'targetni to'liq tekshir', 'nima muammo bor', 'umumiy holatni ko'rsat') — "
+            "'targetni to'liq tekshir', 'nima muammo bor', 'umumiy holatni ko'rsat') -- "
             "bitta aniq obyektga qaratilgan tor savol EMAS, balki to'liq audit so'ralganda.\n"
-            "ACTION — agar amaliy buyruq bo'lsa: yangi target/kampaniya yoqish, mavjud "
+            "ACTION -- agar amaliy buyruq bo'lsa: yangi target/kampaniya yoqish, mavjud "
             "reklamani to'xtatish/yoqish, byudjet o'zgartirish, abtest boshlash, auditoriya/"
             "hudud o'zgartirish (masalan biror viloyat/shaharni QO'SHISH yoki OLIB TASHLASH/"
             "EXCLUDE qilish, \"faqat X qolsin\", \"Y'ni chiqarib tashla\"), yoki shu buyruqqa "
             "javoban berilgan qo'shimcha ma'lumot (byudjet raqami, shahar nomi). Foydalanuvchi "
             "kampaniya/adset nomini o'z uslubida yozishi mumkin (masalan \"AB | Traffic | IG\", "
-            "qisqartmalar, \" | \" bilan ajratilgan nomlar) — bu ham ACTION, GENERAL emas.\n"
-            "METRIC — agar haqiqiy hisobdagi aniq raqam/metrika so'ralayotgan bo'lsa "
+            "qisqartmalar, \" | \" bilan ajratilgan nomlar) -- bu ham ACTION, GENERAL emas.\n"
+            "METRIC -- agar haqiqiy hisobdagi aniq raqam/metrika so'ralayotgan bo'lsa "
             "(masalan: 'video necha kishi ko'rgan', 'CPA qancha', 'necha % odam 15 "
             "soniyani ko'rgan', 'bugungi xarajat qancha').\n"
-            "GENERAL — agar bu shunchaki umumiy savol/maslahat so'rovi bo'lsa (hisobga "
+            "GENERAL -- agar bu shunchaki umumiy savol/maslahat so'rovi bo'lsa (hisobga "
             "tegishli aniq raqam so'ralmagan)."
         ),
         messages=[{"role": "user", "content": f"{history_text}\n\nYangi xabar: {user_text}"}],
     )
     verdict = intent_check.content[0].text.strip().upper()
+    return verdict, history_text
 
+
+def is_heavy_intent(verdict: str) -> bool:
+    """ACTION va ANALYSIS -- Meta API'dan bir necha marta o'qish + Claude
+    Sonnet chaqiruv(lar)i + ijro/tekshirish zanjirini talab qiladi, ba'zan
+    bir necha o'n soniya davom etadi. Vercel'ning 60 soniyalik funksiya
+    limitiga urilib qolmasligi uchun webhook bularni FON (background)
+    so'rovga uzatadi; BUDGET/METRIC/GENERAL yengil va darhol bajariladi."""
+    return "ACTION" in verdict or "ANALYSIS" in verdict
+
+
+def execute_intent(
+    verdict: str, user_text: str, history_text: str = "", chat_id: int | None = None
+) -> str | None:
+    """`classify_intent()` aniqlagan turga qarab tegishli ishni bajaradi va
+    natija matnini (yoki oddiy savol bo'lsa `None`) qaytaradi."""
     if "BUDGET" in verdict:
         return handle_budget_message(user_text, chat_id) if chat_id is not None else None
     if "ANALYSIS" in verdict:
@@ -670,31 +688,45 @@ def handle_chat_command(
     return None
 
 
+def handle_chat_command(
+    user_text: str, recent_history: list[dict] | None = None, chat_id: int | None = None
+) -> str | None:
+    """Eski nom, moslik uchun saqlangan: `classify_intent()` + `execute_intent()`ni
+    ketma-ket, BITTA chaqiruv ichida (fon so'rovga ajratmasdan) bajaradi.
+    VPS/mahalliy rejim (`telegram_bot.py`, uzoq-polling) shuni ishlatadi --
+    u yerda Vercel'ning 60 soniyalik cheklovi yo'q, shuning uchun fon
+    so'rovga ehtiyoj ham yo'q. Vercel webhook (`api/index.py`) endi
+    `classify_intent`/`is_heavy_intent`/`execute_intent`ni to'g'ridan-to'g'ri,
+    alohida-alohida ishlatadi."""
+    verdict, history_text = classify_intent(user_text, recent_history)
+    return execute_intent(verdict, user_text, history_text, chat_id)
+
+
 def _run_pipeline_command(user_text: str, history_text: str) -> str:
     # MUHIM: foydalanuvchi kampaniya/adset'ni ko'pincha NOM bilan ataydi
     # (masalan "AB | Traffic | IG"), Meta ID bilan emas. Shuning uchun har bir
     # amaliy buyruqdan oldin joriy hisob strukturasini (nom + haqiqiy ID)
     # Targetologga beramiz — aks holda u ID'ni bila olmay, action_plan o'rniga
     # oddiy matnli tavsiya yozib qo'yadi (bajarilmagan bo'lib qoladi).
-    try:
-        account_structure = meta_api.get_account_structure()
-        structure_json = json.dumps(account_structure, ensure_ascii=False, indent=2)
-    except meta_api.MetaAPIError as e:
-        return f"⚠️ Meta hisobi bilan bog'lanib bo'lmadi: {e}"
+    # Ikkalasi ham bir-biriga bog'liq emas -- parallel (bir vaqtda) so'rab,
+    # ketma-ket kutishning o'rniga umumiy kutish vaqtini taxminan yarmiga
+    # tushiramiz (Vercel'ning 60 soniyalik funksiya limitiga urilib qolish
+    # xavfini kamaytirish uchun muhim).
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        structure_future = pool.submit(meta_api.get_account_structure)
+        insights_future = pool.submit(meta_api.get_insights, level="campaign", date_preset="last_7d")
 
-    # MUHIM: faqat nom+ID (account_structure) yetarli emas — Targetolog
-    # pause/resume/byudjet kabi qarorlarni ham, oddiy "qancha xarajat bo'ldi"
-    # kabi savolларни ham REAL ko'rsatkichlarsiz to'g'ri bera olmaydi va aks
-    # holda foydalanuvchidan "raqamlarni o'zingiz Ads Manager'dan kiriting" deb
-    # so'rab qo'yadi. Kampaniya darajasida (yengil, ko'p token yemaydi) so'nggi
-    # 7 kunlik CPM/CTR/CPA/spend/reach/frequency shu yerda beriladi. Chuqurroq
-    # (ad-darajasidagi) raqam kerak bo'lsa, foydalanuvchi buni aytadi va METRIC
-    # intent orqali `answer_data_question` to'liq ad-level hisobotni oladi.
-    try:
-        campaign_insights = meta_api.get_insights(level="campaign", date_preset="last_7d")
-        insights_json = json.dumps(campaign_insights, ensure_ascii=False, indent=2)
-    except meta_api.MetaAPIError as e:
-        insights_json = f"(statistika olinmadi: {e})"
+        try:
+            account_structure = structure_future.result()
+            structure_json = json.dumps(account_structure, ensure_ascii=False, indent=2)
+        except meta_api.MetaAPIError as e:
+            return f"⚠️ Meta hisobi bilan bog'lanib bo'lmadi: {e}"
+
+        try:
+            campaign_insights = insights_future.result()
+            insights_json = json.dumps(campaign_insights, ensure_ascii=False, indent=2)
+        except meta_api.MetaAPIError as e:
+            insights_json = f"(statistika olinmadi: {e})"
 
     message = (
         "Foydalanuvchi Telegram orqali quyidagi amaliy buyruqni berdi (kerak bo'lsa "
@@ -738,11 +770,14 @@ def _run_pipeline_command(user_text: str, history_text: str) -> str:
 
         if geo_lookup_needed:
             geo_candidates = {}
-            for place in geo_lookup_needed:
-                try:
-                    geo_candidates[place] = meta_api.search_geo_location(place)
-                except meta_api.MetaAPIError as e:
-                    geo_candidates[place] = {"error": str(e)}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(geo_lookup_needed))) as pool:
+                futures = {pool.submit(meta_api.search_geo_location, place): place for place in geo_lookup_needed}
+                for future in concurrent.futures.as_completed(futures):
+                    place = futures[future]
+                    try:
+                        geo_candidates[place] = future.result()
+                    except meta_api.MetaAPIError as e:
+                        geo_candidates[place] = {"error": str(e)}
             extra_parts.append(
                 "Hudud nomlari uchun Meta'dan topilgan rasmiy geo-target "
                 f"nomzodlari:\n{json.dumps(geo_candidates, ensure_ascii=False, indent=2)}"
@@ -750,11 +785,14 @@ def _run_pipeline_command(user_text: str, history_text: str) -> str:
 
         if adset_details_needed:
             adset_details = {}
-            for adset_id in adset_details_needed:
-                try:
-                    adset_details[adset_id] = meta_api.get_adset_details(adset_id)
-                except meta_api.MetaAPIError as e:
-                    adset_details[adset_id] = {"error": str(e)}
+            with concurrent.futures.ThreadPoolExecutor(max_workers=min(4, len(adset_details_needed))) as pool:
+                futures = {pool.submit(meta_api.get_adset_details, aid): aid for aid in adset_details_needed}
+                for future in concurrent.futures.as_completed(futures):
+                    adset_id = futures[future]
+                    try:
+                        adset_details[adset_id] = future.result()
+                    except meta_api.MetaAPIError as e:
+                        adset_details[adset_id] = {"error": str(e)}
             extra_parts.append(
                 "So'ralgan adset(lar)ning to'liq joriy sozlamalari:\n"
                 f"{json.dumps(adset_details, ensure_ascii=False, indent=2)}"

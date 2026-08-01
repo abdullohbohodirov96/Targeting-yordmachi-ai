@@ -208,21 +208,96 @@ def handle_command(chat_id: int, cmd: str, args: list[str]) -> None:
     tg_send(chat_id, "Noma'lum buyruq. /start yozib, mavjud buyruqlarni ko'ring.")
 
 
+def _self_base_url() -> str:
+    """Joriy Vercel deploy manzilini aniqlaydi (fon so'rovni O'ZIMIZGA
+    yuborish uchun kerak). Vercel `VERCEL_URL` env o'zgaruvchisini avtomatik
+    beradi (protokolsiz, masalan "unduurv-bolimi-bot.vercel.app"); u bo'lmasa
+    (masalan mahalliy test) ma'lum production domenga tushamiz."""
+    host = os.environ.get("VERCEL_URL") or "unduurv-bolimi-bot.vercel.app"
+    if not host.startswith("http"):
+        host = f"https://{host}"
+    return host
+
+
+def _trigger_async_processing(payload: dict) -> bool:
+    """`/api/process-action`ga ICHKI so'rov yuboradi va JAVOBNI ATAYLAB
+    KUTMAYDI (juda qisqa timeout).
+
+    NEGA SHUNDAY: Vercel har bir kiruvchi so'rovni qabul qilgach, uni to'liq
+    qayta ishlaydi — chaqiruvchi javobni kutayaptimi yo'qmi, bunga bog'liq
+    emas. Shuning uchun bu yerdan qisqa (0.5s) timeout bilan so'rov yuborib,
+    javobni kutmasdan darhol qaytish xavfsiz: `/api/process-action` YANGI,
+    alohida Vercel funksiya chaqiruvi sifatida ishga tushadi va o'zining
+    TO'LIQ 60 soniyalik vaqtiga ega bo'ladi — joriy webhook so'rovi esa
+    Telegram'ga DARHOL 200 OK qaytarib, hech qachon Vercel'ning
+    FUNCTION_INVOCATION_TIMEOUT xatosiga urilib qolmaydi."""
+    import requests
+    url = f"{_self_base_url()}/api/process-action"
+    try:
+        requests.post(
+            url,
+            json=payload,
+            headers={"Authorization": f"Bearer {CRON_SECRET}"},
+            timeout=0.5,
+        )
+        return True
+    except requests.exceptions.Timeout:
+        # KUTILGAN holat: so'rov haqiqatan yuborildi, biz shunchaki javobni
+        # kutmadik — fon ishga tushirish muvaffaqiyatli hisoblanadi.
+        return True
+    except requests.exceptions.RequestException:
+        logger.exception("Fon so'rovini yuborib bo'lmadi")
+        return False
+
+
 def handle_free_text(chat_id: int, user_text: str) -> None:
     history = get_history(chat_id)
     budget_tracker.set_notify_chat_id(chat_id)
 
     # Ish jarayonini ko'rsatuvchi vaqtinchalik xabar — foydalanuvchi bot
-    # "osilib qolganmi yoki ishlayaptimi" bilmay qolmasligi uchun. Ish
-    # tugagach (natija qanday bo'lishidan qat'iy nazar) shu xabar o'chiriladi.
+    # "osilib qolganmi yoki ishlayaptimi" bilmay qolmasligi uchun.
     status_id = tg_send_status(chat_id, "⏳ Bajaryapman...")
 
     try:
-        command_result = orchestrator.handle_chat_command(
-            user_text, recent_history=history, chat_id=chat_id
-        )
+        verdict, history_text = orchestrator.classify_intent(user_text, history)
     except Exception as e:
-        logger.exception("handle_chat_command xatosi")
+        logger.exception("classify_intent xatosi")
+        tg_delete(chat_id, status_id)
+        tg_send(chat_id, f"⚠️ Xabarni tushunishda xatolik: {e}\n\nQaytadan urinib ko'ring.")
+        return
+
+    if orchestrator.is_heavy_intent(verdict):
+        # OG'IR YO'L (ACTION/ANALYSIS): Meta API + Claude Sonnet zanjiri bir
+        # necha o'n soniya cho'zilishi mumkin — buni HOZIRGI so'rovda EMAS,
+        # `/api/process-action` fon so'roviga uzatamiz (yuqoridagi izohga
+        # qarang). Foydalanuvchiga darhol ishonch xabari beriladi, natija esa
+        # fon ishi tugagach alohida xabar sifatida keladi.
+        tg_delete(chat_id, status_id)
+        history.append({"role": "user", "content": user_text})
+        save_history(chat_id, history)
+        dispatched = _trigger_async_processing({
+            "chat_id": chat_id,
+            "user_text": user_text,
+            "history_text": history_text,
+            "verdict": verdict,
+        })
+        if dispatched:
+            tg_send(
+                chat_id,
+                "⏳ Qabul qildim, ishlab chiqyapman — tayyor bo'lganda o'zim yozaman "
+                "(bir necha o'n soniya ketishi mumkin).",
+            )
+        else:
+            tg_send(chat_id, "⚠️ Ichki xatolik: fon ishga tushirilmadi, qaytadan urinib ko'ring.")
+        return
+
+    # YENGIL YO'L (BUDGET / METRIC / GENERAL) — bitta arzon model chaqiruvi,
+    # 60 soniya ichiga bemalol sig'adi, shuning uchun shu so'rov ichida
+    # darhol bajaramiz.
+    try:
+        command_result = orchestrator.execute_intent(verdict, user_text, history_text, chat_id)
+    except Exception as e:
+        logger.exception("execute_intent xatosi")
         tg_delete(chat_id, status_id)
         tg_send(
             chat_id,
@@ -240,7 +315,7 @@ def handle_free_text(chat_id: int, user_text: str) -> None:
         tg_send(chat_id, command_result)
         return
 
-    # Oddiy maslahat/Q&A rejimi (hisobga tegilmaydi)
+    # Oddiy maslahat/Q&A rejimi (hisobga tegilmaydi) — GENERAL
     history.append({"role": "user", "content": user_text})
     try:
         response = client.messages.create(
@@ -285,6 +360,52 @@ def webhook():
         logger.exception("Webhook ishlov berishda kutilmagan xatolik")
         tg_send(chat_id, "⚠️ Kutilmagan ichki xatolik yuz berdi. Qaytadan urinib ko'ring.")
 
+    return jsonify({"ok": True})
+
+
+@app.route("/api/process-action", methods=["POST"])
+def process_action():
+    """OG'IR (ACTION/ANALYSIS) buyruqlarni haqiqiy bajaradigan FON endpoint'i.
+    `handle_free_text()` bu yerga `_trigger_async_processing()` orqali,
+    javobni kutmasdan (fire-and-forget) murojaat qiladi -- shuning uchun bu
+    chaqiruv YANGI, alohida Vercel funksiya invokatsiyasi sifatida ishga
+    tushadi va o'ZINING to'liq 60 soniyalik `maxDuration`iga ega bo'ladi.
+
+    Xavfsizlik: faqat `CRON_SECRET` bilan (bizning o'z ichki so'rovimiz)
+    chaqirilishi mumkin -- tashqaridan tasodifiy/qasddan chaqirilishning
+    oldini oladi."""
+    auth = request.headers.get("Authorization", "")
+    if not CRON_SECRET or auth != f"Bearer {CRON_SECRET}":
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    chat_id = data.get("chat_id")
+    user_text = data.get("user_text")
+    history_text = data.get("history_text", "")
+    verdict = data.get("verdict", "")
+    if chat_id is None or not user_text:
+        return jsonify({"ok": False, "error": "bad payload"}), 400
+
+    try:
+        result = orchestrator.execute_intent(verdict, user_text, history_text, chat_id)
+    except Exception as e:
+        logger.exception("Fon ishida xatolik (process_action)")
+        tg_send(
+            chat_id,
+            f"⚠️ Fon ishida kutilmagan xatolik yuz berdi: {e}\n\nQaytadan urinib ko'ring.",
+        )
+        # 200 qaytaramiz -- Telegram/webhook allaqachon o'z javobini bergan,
+        # bu faqat bizning ICHKI fon so'rovimiz, uni qayta urinishga hojat yo'q.
+        return jsonify({"ok": False}), 200
+
+    if result is None:
+        result = "Tushunmadim, aniqroq yozib qayta yuboring."
+
+    history = get_history(chat_id)
+    history.append({"role": "assistant", "content": result})
+    save_history(chat_id, history)
+    save_last_report(chat_id, result)
+    tg_send(chat_id, result)
     return jsonify({"ok": True})
 
 

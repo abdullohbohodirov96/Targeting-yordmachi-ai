@@ -85,9 +85,34 @@ _MONTH_REFERENCE = re.compile(
 # barcha shu variantlarni qamrab oladi.
 _REPORT_REFERENCE = re.compile(r"his\w*bot\w*|pdf|report", re.IGNORECASE)
 
+# MUHIM (bug fix): foydalanuvchi "20 iyul hisobotini ber" yoki "iyul 20
+# sanasidagi hisobot" desa, bu ANIQ BITTA KUN haqida so'ramoqda -- oylik
+# (butun oy) hisobot EMAS. Avvalgi versiya faqat oy nomi + "hisobot" so'zi
+# borligini tekshirardi, shuning uchun "20 iyul hisobotini ber" ham xato
+# ravishda BUTUN IYUL oyi PDF hisobotini yuborardi (foydalanuvchi
+# skrinshot bilan ko'rsatdi -- "20 iyul hisobotini ber" so'ralganda ham
+# "oylik_hisobot_2026-07-01_2026-07-31.pdf" kelgan). Endi: agar matnda
+# 1-2 xonali RAQAM oy nomiga BEVOSITA yopishib/yaqin turgan bo'lsa (raqam
+# oy nomidan oldin yoki keyin, oralig'ida faqat bo'shliq/chiziqcha bilan),
+# bu ANIQ BIR KUN degani -- demak oylik hisobot EMAS, oddiy kunlik/sana
+# so'rovi sifatida (_resolve_query_period orqali) ishlov berilishi kerak.
+# "1 oylik hisobot" kabi iboralar bunga tushmaydi, chunki "oylik" oy NOMI
+# emas (_UZ_MONTHS ro'yxatida yo'q), shuning uchun ular hali ham oddiy
+# oylik hisobot sifatida to'g'ri aniqlanadi.
+_MONTH_NAMES_PATTERN = "|".join(_UZ_MONTHS.keys())
+_DAY_NEAR_MONTH_NAME = re.compile(
+    r"\b\d{1,2}\b[\s\-]*(?:" + _MONTH_NAMES_PATTERN + r")\b|"
+    r"\b(?:" + _MONTH_NAMES_PATTERN + r")\b[\s\-]*\d{1,2}\b",
+    re.IGNORECASE,
+)
+
 
 def is_monthly_report_request(user_text: str) -> bool:
     text = user_text or ""
+    if _DAY_NEAR_MONTH_NAME.search(text):
+        # Aniq bir kun so'ralmoqda (masalan "20 iyul") -- oylik PDF emas,
+        # oddiy kunlik/sana so'rovi sifatida ishlov berilsin.
+        return False
     return bool(_MONTH_REFERENCE.search(text) and _REPORT_REFERENCE.search(text))
 
 

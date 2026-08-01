@@ -365,6 +365,102 @@ _PLANNED_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+# MUHIM (bug fix): "27 iyul" kabi ANIQ sana so'ralganda, avvalgi versiya bu
+# sanani (since/until) OpenAI (call_light) orqali JSON qilib chiqartirardi --
+# lekin bu NOANIQ chiqib qoldi: foydalanuvchi "27 iyul" so'raganda bot
+# "Xarajat: $28.56" deb ko'rsatdi, aslida Meta Ads Manager'da o'sha kunlik
+# HAQIQIY xarajat atigi $14.75 edi (deyarli ANIQ 2 barobar ko'p -- demak
+# LLM since/until'ni BIR KUN o'rniga IKKI KUNLIK oraliq qilib noto'g'ri
+# chiqargan bo'lishi kerak). Bu ANIQ sana/oy nomi bilan bog'liq sanalarni endi
+# butunlay DETERMINISTIK (regex + Python sana arifmetikasi) orqali hisoblaymiz
+# -- LLM umuman chaqirilmaydi, shuning uchun bunday xato butunlay yo'qoladi.
+# LLM (call_light) faqat matn hech qanday aniq sanaga TO'G'RI KELMAGANDA
+# (masalan "oxirgi hafta", "shu haftada" kabi kamdan-kam iboralar uchun)
+# zaxira sifatida ishlatiladi.
+_QP_MONTH_NAMES = "|".join(monthly_report._UZ_MONTHS.keys())
+# MUHIM: \w* bilan -- "bugun" so'zi "bugungi", "bugundan" kabi qo'shimchali
+# shaklda ham kelishi mumkin, oddiy \bbugun\b bunday hollarda mos kelmay
+# qolib, keraksiz LLM chaqiruviga (va potentsial xatoga) olib kelardi.
+_QP_TODAY_PATTERN = re.compile(r"\bbugun\w*\b|\bhozir\w*\b", re.IGNORECASE)
+_QP_YESTERDAY_PATTERN = re.compile(r"\bkecha\w*\b", re.IGNORECASE)
+# "1-10 avgust" / "1 - 10 avgust" kabi BIR OY ICHIDAGI kun oralig'i
+_QP_DAY_RANGE_PATTERN = re.compile(
+    r"\b(\d{1,2})\s*[-–]\s*(\d{1,2})\s*(" + _QP_MONTH_NAMES + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _qp_find_day_near_month(text_lower: str, month_name: str) -> int | None:
+    """`month_name` yoniga yopishgan 1-2 xonali kun raqamini topadi -- raqam
+    oy nomidan OLDIN yoki KEYIN, oralig'ida faqat bo'shliq/chiziqcha bilan
+    kelishi mumkin (masalan "27 iyul", "iyul 27", "27-iyul")."""
+    m = re.search(r"\b(\d{1,2})\b[\s\-]*" + re.escape(month_name), text_lower)
+    if m:
+        return int(m.group(1))
+    m = re.search(re.escape(month_name) + r"[\s\-]*\b(\d{1,2})\b", text_lower)
+    if m:
+        return int(m.group(1))
+    return None
+
+
+def _qp_parse_explicit_date(user_text: str, today) -> "date | None":
+    """Xabarda ANIQ BITTA sana (oy nomi + kun raqami) bormi -- bo'lsa shu
+    sanani (yil ko'rsatilmagan bo'lsa joriy yildan, kelajakka chiqib
+    qolmasligi uchun kerak bo'lsa o'tgan yildan) qaytaradi, aks holda None."""
+    from datetime import date as _date
+    text_lower = (user_text or "").lower()
+    for month_name, month_num in monthly_report._UZ_MONTHS.items():
+        if month_name not in text_lower:
+            continue
+        day = _qp_find_day_near_month(text_lower, month_name)
+        if day is None or not (1 <= day <= 31):
+            continue
+        # MUHIM: OY nomiga qarab yil tanlanadi (kun raqamiga qarab emas) --
+        # `_qp_parse_day_range`dagi bir xil bug-fix bilan bir xil mantiq,
+        # aks holda joriy oy ichidagi (bugundan bir necha kun keyingi)
+        # sana so'ralganda butun yil xato ravishda o'tgan yilga surilib
+        # ketardi.
+        year = today.year
+        if month_num > today.month:
+            year -= 1
+        try:
+            candidate = _date(year, month_num, day)
+        except ValueError:
+            continue
+        return candidate
+    return None
+
+
+def _qp_parse_day_range(user_text: str, today) -> "tuple[date, date] | None":
+    """Xabarda "1-10 avgust" kabi BIR OY ICHIDAGI kun oralig'i bormi --
+    bo'lsa (since, until) juftligini qaytaradi, aks holda None."""
+    from datetime import date as _date
+    text_lower = (user_text or "").lower()
+    m = _QP_DAY_RANGE_PATTERN.search(text_lower)
+    if not m:
+        return None
+    day1, day2, month_name = int(m.group(1)), int(m.group(2)), m.group(3)
+    month_num = monthly_report._UZ_MONTHS.get(month_name)
+    if not month_num:
+        return None
+    if day1 > day2:
+        day1, day2 = day2, day1
+    # MUHIM (bug fix): bu yerda ANIQ sana emas, OY nomiga qarab yil
+    # tanlanadi (monthly_report.resolve_monthly_period bilan bir xil
+    # mantiq) -- aks holda masalan bugun 01.08.2026 bo'lganda "1-10
+    # avgust" so'ralsa, "10-avgust > bugun" tekshiruvi false-positive berib,
+    # butun oraliqni xato ravishda O'TGAN YILGA (2025) surib yuborardi,
+    # holbuki foydalanuvchi aniq JORIY oyni so'rayotgan edi.
+    year = today.year
+    if month_num > today.month:
+        year -= 1
+    try:
+        since = _date(year, month_num, day1)
+        until = _date(year, month_num, day2)
+    except ValueError:
+        return None
+    return since, until
+
 
 class TargetologFormatError(Exception):
     """Model kutilgan JSON o'rniga erkin matn qaytarganda ko'tariladi (masalan,
@@ -915,7 +1011,33 @@ def _resolve_query_period(user_text: str) -> tuple[dict, str]:
     Qaytaradi: `(meta_api.get_insights ga beriladigan kwargs, odam o'qiydigan
     davr nomi)` -- masalan `({"date_preset": "today"}, "bugungi kun")` yoki
     `({"time_range": {"since": "2026-07-20", "until": "2026-07-20"}}, "20.07.2026")`."""
-    today_iso = datetime.utcnow().date().isoformat()
+    tashkent_today = (datetime.utcnow() + timedelta(hours=5)).date()
+
+    # 1) DETERMINISTIK yo'l -- eng ko'p uchraydigan holatlar (bugun/kecha,
+    # aniq bitta sana, kun oralig'i) LLM'ga umuman murojaat qilmasdan aniq
+    # hisoblanadi, shuning uchun "27 iyul"da xato (2 barobar ko'p) xarajat
+    # chiqishi kabi muammolar butunlay oldi olinadi.
+    if _QP_TODAY_PATTERN.search(user_text or ""):
+        return {"date_preset": "today"}, "bugungi kun"
+
+    if _QP_YESTERDAY_PATTERN.search(user_text or ""):
+        y = tashkent_today - timedelta(days=1)
+        return {"time_range": {"since": y.isoformat(), "until": y.isoformat()}}, y.strftime("%d.%m.%Y")
+
+    day_range = _qp_parse_day_range(user_text, tashkent_today)
+    if day_range:
+        since_d, until_d = day_range
+        label = f"{since_d.strftime('%d.%m')}–{until_d.strftime('%d.%m.%Y')}"
+        return {"time_range": {"since": since_d.isoformat(), "until": until_d.isoformat()}}, label
+
+    explicit_date = _qp_parse_explicit_date(user_text, tashkent_today)
+    if explicit_date:
+        iso = explicit_date.isoformat()
+        return {"time_range": {"since": iso, "until": iso}}, explicit_date.strftime("%d.%m.%Y")
+
+    # 2) Zaxira: yuqoridagi aniq naqshlarga to'g'ri kelmagan boshqa turdagi
+    # so'rovlar uchun (masalan "oxirgi hafta") arzon model orqali aniqlanadi.
+    today_iso = tashkent_today.isoformat()
     extraction = call_light(
         f"Bugungi sana: {today_iso} (YYYY-MM-DD). Foydalanuvchi xabaridan aniq QAYSI "
         "SANA yoki DAVR haqida so'rayotganini aniqla. Faqat JSON qaytar: "

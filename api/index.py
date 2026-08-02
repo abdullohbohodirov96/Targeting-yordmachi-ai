@@ -566,6 +566,26 @@ def _daily_report_targets() -> list[int]:
     return [chat_id] if chat_id is not None else []
 
 
+def _notify_cron_failure(cron_label: str, targets: list[int], error: Exception) -> None:
+    """MUHIM (bug fix): avvalgi versiyada cron endpoint'larida xatolik
+    chiqsa, faqat server logiga yozilardi (`logger.exception`) va HTTP
+    500 qaytarilardi -- lekin bu ikkalasi ham FOYDALANUVCHIGA KO'RINMAYDI
+    (Vercel Cron/cron-job.org javobini hech kim o'qib o'tirmaydi). Natijada
+    foydalanuvchi kunlik hisobot kelmay qolganini payqamaguncha, bot
+    "sukut saqlab" qo'yardi -- xuddi hech narsa so'ralmagandek. Endi har
+    qanday cron xatoligida ham guruhga QISQA ogohlantirish yuboriladi,
+    shuning uchun "hisobot/tekshiruv kelmadi, lekin nega ekani noma'lum"
+    degan holat butunlay yo'qoladi -- kamida xatolik borligi ko'rinadi."""
+    if not targets:
+        return
+    text = f"⚠️ {cron_label} ishlamadi (texnik xatolik): {error}\n\nKeyingi urinishda avtomatik qayta tekshiriladi."
+    for cid in targets:
+        try:
+            tg_send(cid, text)
+        except Exception:
+            logger.exception("Cron xatoligi haqida ham xabar yuborib bo'lmadi (%s)", cron_label)
+
+
 @app.route("/api/cron/daily", methods=["GET"])
 def cron_daily():
     if not _cron_authorized():
@@ -583,8 +603,9 @@ def cron_daily():
         # Kechagi holat bilan solishtirish `orchestrator.gather_data()` ichida
         # avtomatik amalga oshadi (KV'da saqlangan oldingi kun snapshoti orqali).
         report = orchestrator.run_daily_cron_report(dry_run=False)
-    except Exception:
+    except Exception as e:
         logger.exception("Kunlik avtomatik tahlil xatosi")
+        _notify_cron_failure("Kunlik avtomatik tahlil (/api/cron/daily)", targets, e)
         return jsonify({"ok": False, "error": "daily analysis failed"}), 500
 
     if report is None:
@@ -630,8 +651,9 @@ def cron_watch():
 
     try:
         report = orchestrator.run_daily_cron_report(dry_run=False)
-    except Exception:
+    except Exception as e:
         logger.exception("Kuzatuv tsikli xatosi")
+        _notify_cron_failure("Kuzatuv tsikli (/api/cron/watch)", targets, e)
         return jsonify({"ok": False, "error": "watch analysis failed"}), 500
 
     if report is None:
@@ -680,6 +702,7 @@ def cron_admin_report():
         )
     except Exception as e:
         logger.exception("Admin hisobot xatosi")
+        _notify_cron_failure("Kunlik ADMIN TARGET HISOBOTI (/api/cron/admin-report)", targets, e)
         return jsonify({"ok": False, "error": str(e)}), 500
 
     for cid in targets:
@@ -695,8 +718,9 @@ def cron_budget():
 
     try:
         alert = budget_tracker.check_and_alert()
-    except Exception:
+    except Exception as e:
         logger.exception("Byudjet tekshiruvida xatolik")
+        _notify_cron_failure("Byudjet tekshiruvi (/api/cron/budget)", _daily_report_targets(), e)
         return jsonify({"ok": False, "error": "budget check failed"}), 500
 
     if alert:

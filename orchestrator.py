@@ -150,6 +150,23 @@ def _call_openai(api_key: str, system_prompt: str, messages: list[dict], max_tok
     return data["choices"][0]["message"]["content"]
 
 # Har bir action_plan tipi -> uni haqiqiy hisobda bajaradigan funksiya
+# Har bir action_type uchun ODDIY, ODAM O'QIYDIGAN fe'l -- guruhga
+# yuboriladigan hisobotda "N ta o'zgarish qildim" deyish o'rniga, ANIQ
+# qaysi target'ga NIMA qilinganini ko'rsatish uchun (foydalanuvchi aniq
+# shuni so'radi: "guruhga tog'rilangan qilingan narsalarni yozsin").
+_ACTION_FRIENDLY_VERB = {
+    "pause_ad": "to'xtatdim",
+    "resume_ad": "qayta ishga tushirdim",
+    "archive_campaign": "arxivladim",
+    "increase_budget": "byudjetini oshirdim",
+    "decrease_budget": "byudjetini kamaytirdim",
+    "fix_region_targeting": "hudud sozlamasini tuzatdim",
+    "adjust_audience": "auditoriyasini o'zgartirdim",
+    "launch_campaign": "yangi kampaniya sifatida yaratdim",
+    "start_ab_test": "A/B testni boshladim",
+    "conclude_ab_test": "A/B testni yakunladim (g'olibni tanladim)",
+}
+
 ACTION_EXECUTORS = {
     "pause_ad": lambda a: _execute_and_verify_status(a["object_id"], "PAUSED"),
     "resume_ad": lambda a: _execute_and_verify_status(a["object_id"], "ACTIVE"),
@@ -694,7 +711,23 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> tuple[str,
     report_lines = [targetolog_plan.get("summary", "").strip()]
 
     if succeeded:
-        report_lines.append(f"\n✅ {len(succeeded)} ta o'zgarish qildim.")
+        # MUHIM (foydalanuvchi so'ragan aniqlik): faqat "N ta o'zgarish
+        # qildim" deb sonini aytish YETARLI EMAS -- foydalanuvchi ANIQ QAYSI
+        # target(lar)ga NIMA qilinganini guruhda ko'rishni so'radi ("target
+        # oshib ketvotkan bolsa ... guruhga tog'rilangan qilingan
+        # narsalarni yozsin"). Shuning uchun endi har bir muvaffaqiyatli
+        # action alohida qatorda, target nomi + oddiy tildagi amal bilan
+        # ko'rsatiladi.
+        report_lines.append(f"\n✅ {len(succeeded)} ta o'zgarish qildim:")
+        for s in succeeded[:10]:
+            action = s["action"]
+            name = action.get("object_name", action.get("object_id", "?"))
+            verb = _ACTION_FRIENDLY_VERB.get(action["type"], action["type"])
+            reason = (action.get("reason") or "").strip()
+            reason_part = f" — {reason}" if reason else ""
+            report_lines.append(f"   🔧 {name}: {verb}{reason_part}")
+        if len(succeeded) > 10:
+            report_lines.append(f"   ...va yana {len(succeeded) - 10} tasi.")
     if failed:
         names = ", ".join(
             f["action"].get("object_name", f["action"].get("object_id", "?"))

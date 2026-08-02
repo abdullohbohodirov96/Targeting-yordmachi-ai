@@ -43,10 +43,36 @@ Senga har safar quyidagi ma'lumotlar beriladi (orchestrator tomonidan):
 
 1. **Tahlil qil**: Har bir kampaniya/adset/ad bo'yicha bo'lim 4.8 qoidalariga ko'ra
    CPA/ROAS asosida holatni bahola, CPM/CTR/Frequency bilan sababni tashxis qo'y.
-2. **On/off qarori**: Agar reklama 5-7 kundan beri maqsaddan yuqori CPA bilan
-   ishlayotgan bo'lsa va sabab tuzatib bo'lmaydigan bo'lsa — `pause_ad` taklif qil.
-   Agar yaxshi ishlayotgan reklama pauzada bo'lsa va shart-sharoit tuzatilgan bo'lsa —
-   `resume_ad` taklif qil.
+2. **Yuqori narx (CPA/CPL)ga reaksiya tartibi — QAT'IY USTUVORLIK (foydalanuvchi
+   tasdiqlagan tartib, o'zgartirmang):** Agar biror target/adset/ad'ning narxi
+   (CPA/CPL) biznes maqsadidan (`target_cpa_usd`) YUQORI bo'lsa, DARHOL pause
+   yoki byudjet kamaytirishga o'tmang — avval ENG YENGIL, qaytarib bo'ladigan
+   choralarni O'ZINGIZ, so'ralmasdan, shu QAT'IY TARTIBDA sinab ko'ring:
+   1) `adjust_audience` — auditoriyani toraytirish (past sifatli/qimmat
+      segmentlarni chiqarib tashlash) yoki kengaytirish (agar reach juda
+      kichik bo'lsa).
+   2) Yosh oralig'ini o'zgartirish — kattalashtirish, kichraytirish yoki
+      butunlay olib tashlash (shu ham `adjust_audience` orqali,
+      `targeting.age_min`/`age_max` maydonlari bilan, boshqa maydonlarni
+      o'zgartirmasdan).
+   3) `start_ab_test` — yangi auditoriya/kreativ variantini eskisi bilan
+      solishtirib sinang.
+   Ushbu uchtasi allaqachon sinalgan yoki aniq mos kelmasa GINA, keyingi
+   navbatda:
+   4) `decrease_budget` — byudjetni kamaytirish (bu ustuvorlikda OXIRIGA
+      YAQIN chora — birinchi bo'lib ishlatilmasin).
+   5) `pause_ad` — ENG OXIRGI chora: faqat reklama 5-7 kundan beri barqaror
+      yuqori CPA bilan ishlayotgan bo'lsa VA sabab tuzatib bo'lmaydigan
+      (yuqoridagi 1-4 chora yordam bermagan yoki mos kelmagan) bo'lsagina
+      taklif qiling.
+   Har safar narx maqsaddan oshgani aniqlansa, `no_action` bilan jim
+   o'tkazib yubormang — qaysi target, qancha narx (masalan "$2.6 o'rniga
+   $4.10 chiqdi"), va qaysi chora ko'rilgani (yoki nega hali hech narsa
+   qilinmagani, masalan "kutyapman, bugun birinchi kun")ni `summary`da ANIQ
+   ayting — bu xabar Telegram guruhiga yuboriladi, shuning uchun jim
+   o'tirmaslik MUHIM.
+   Agar yaxshi ishlayotgan reklama pauzada bo'lsa va shart-sharoit tuzatilgan
+   bo'lsa — `resume_ad` taklif qil.
    **Tozalash (`archive_campaign`)**: Agar kampaniya UZOQ VAQTDAN BERI (masalan
    30+ kun) PAUSED holatda bo'lsa, kelajakda qayta ishlatilishi kutilmasa va
    `account_structure`da faol emasligi aniq bo'lsa — `archive_campaign` taklif

@@ -385,6 +385,15 @@ def handle_free_text(chat_id: int, user_text: str) -> None:
             "verdict": verdict,
         })
         if dispatched:
+            # MUHIM (bug fix): agar fon ishi ("/api/process-action") Vercel'ning
+            # maxDuration chegarasiga urilib SIGKILL bo'lsa, ichkaridagi try/except
+            # HECH QACHON ishga tushmaydi -- shuning uchun bu yerda, ish
+            # boshlanishidan OLDIN, KV'ga "kutilyapti" deb belgi qo'yamiz. Agar
+            # process_action muvaffaqiyatli tugasa YOKI o'zining except blokida
+            # xatoni ushlasa, belgi o'chiriladi; aks holda (haqiqiy hard timeout)
+            # tez-tez ishlaydigan /api/cron/pending-check buni topib, foydalanuvchiga
+            # alohida xabar beradi -- "bot hech narsa demadi" holati yo'qoladi.
+            orchestrator.mark_action_pending(chat_id, user_text)
             tg_send(
                 chat_id,
                 "⏳ Qabul qildim, ishlab chiqyapman — tayyor bo'lganda o'zim yozaman "
@@ -514,6 +523,11 @@ def process_action():
         result = orchestrator.execute_intent(verdict, user_text, history_text, chat_id)
     except Exception as e:
         logger.exception("Fon ishida xatolik (process_action)")
+        # MUHIM: bu yerga yetib kelgan bo'lsak, ish HAQIQATAN tugagan (garchi
+        # xato bilan bo'lsa ham) -- SIGKILL bo'lmagan, shuning uchun "kutish"
+        # belgisini olib tashlaymiz (aks holda pending-check keyinroq buni
+        # ham "javobsiz qoldi" deb ikkinchi marta xabar berardi).
+        orchestrator.clear_action_pending(chat_id)
         tg_send(
             chat_id,
             f"⚠️ Fon ishida kutilmagan xatolik yuz berdi: {e}\n\nQaytadan urinib ko'ring.",
@@ -521,6 +535,11 @@ def process_action():
         # 200 qaytaramiz -- Telegram/webhook allaqachon o'z javobini bergan,
         # bu faqat bizning ICHKI fon so'rovimiz, uni qayta urinishga hojat yo'q.
         return jsonify({"ok": False}), 200
+
+    # MUHIM: muvaffaqiyatli tugadi -- "kutish" belgisini olib tashlaymiz
+    # (shu yerdan keyin biror joyda yana xato chiqib qolsa ham, foydalanuvchi
+    # allaqachon natija xabarini olgani uchun pending-check aralashmasligi kerak).
+    orchestrator.clear_action_pending(chat_id)
 
     if result is None:
         result = "Tushunmadim, aniqroq yozib qayta yuboring."
@@ -584,6 +603,37 @@ def _notify_cron_failure(cron_label: str, targets: list[int], error: Exception) 
             tg_send(cid, text)
         except Exception:
             logger.exception("Cron xatoligi haqida ham xabar yuborib bo'lmadi (%s)", cron_label)
+
+
+@app.route("/api/cron/pending-check", methods=["GET"])
+def cron_pending_check():
+    """MUHIM (bug fix): ACTION buyruqlari (`/api/process-action`) ba'zan
+    Vercel'ning `maxDuration` chegarasiga urilib SIGKILL bo'ladi -- bu
+    Python except bilan HECH QACHON ushlanmaydigan, kod umuman davom
+    etmaydigan holat, shuning uchun foydalanuvchi "Qabul qildim..."
+    xabaridan keyin ABADIY hech narsa olmasdi (Vercel logida 504 bor,
+    Telegram'da hech narsa yo'q -- foydalanuvchi buni skrinshot bilan
+    ko'rsatdi).
+
+    Bu endpoint TEZ-TEZ (tavsiya: har 1-2 daqiqada, cron-job.org orqali)
+    chaqirilishi kerak -- HECH QANDAY Meta API yoki LLM chaqiruvi qilmaydi
+    (faqat KV o'qish/yozish), shuning uchun deyarli bepul va tez. Agar biror
+    buyruq belgilangan vaqtdan (`orchestrator._PENDING_ACTION_TIMEOUT_SECONDS`)
+    ko'p kutayotgan bo'lsa -- demak u hech qachon tugamagan -- foydalanuvchiga
+    alohida "vaqt tugadi" xabari yuboriladi, shu orqali "bot hech narsa
+    demadi" holati BUTUNLAY yo'qoladi."""
+    if not _cron_authorized():
+        return jsonify({"ok": False, "error": "unauthorized"}), 401
+
+    try:
+        stale = orchestrator.check_stale_pending_actions()
+    except Exception:
+        logger.exception("Pending-check xatosi")
+        return jsonify({"ok": False, "error": "pending check failed"}), 500
+
+    for chat_id, text in stale:
+        tg_send(chat_id, text)
+    return jsonify({"ok": True, "notified": len(stale)})
 
 
 @app.route("/api/cron/daily", methods=["GET"])

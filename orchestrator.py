@@ -863,7 +863,11 @@ def classify_intent(
             "EXCLUDE qilish, \"faqat X qolsin\", \"Y'ni chiqarib tashla\"), yoki shu buyruqqa "
             "javoban berilgan qo'shimcha ma'lumot (byudjet raqami, shahar nomi). Foydalanuvchi "
             "kampaniya/adset nomini o'z uslubida yozishi mumkin (masalan \"AB | Traffic | IG\", "
-            "qisqartmalar, \" | \" bilan ajratilgan nomlar) -- bu ham ACTION, GENERAL emas.\n"
+            "qisqartmalar, \" | \" bilan ajratilgan nomlar) -- bu ham ACTION, GENERAL emas. "
+            "Bunga MUHIM MISOL: foydalanuvchi biror target/kampaniyaning natijasi/lead soni "
+            "KAM/PAST deb shikoyat qilsa va uni YAXSHILASH/KO'PAYTIRISHNI so'rasa (masalan "
+            "\"bu targetda lead kam, ko'paytir\", \"X kam ishlayapti, tuzat\") -- bu ham ACTION "
+            "(Targetolog o'zi choralar ko'rishi kerak), METRIC (faqat raqam ko'rsatish) EMAS.\n"
             "METRIC -- agar haqiqiy hisobdagi JORIY raqam/statistika so'ralayotgan bo'lsa. "
             "Bunga ikki xil so'rov kiradi: (1) ANIQ bitta ko'rsatkich (masalan 'video necha "
             "kishi ko'rgan', 'CPA qancha', 'necha % odam 15 soniyani ko'rgan'), VA (2) "
@@ -1194,6 +1198,90 @@ def build_admin_report(
     return header + "\n".join(body_lines)
 
 
+
+
+# MUHIM (bug fix): Vercel bir funksiya chaqiruvini `maxDuration` chegarasida
+# QATTIQ o'ldiradi (FUNCTION_INVOCATION_TIMEOUT/504) -- bu HAQIQIY process
+# SIGKILL kabi ishlaydi, shuning uchun `process_action()` ichidagi oddiy
+# try/except uni HECH QACHON tuta olmaydi (kod umuman davom etmaydi, hech
+# qanday except bloki ishga tushmaydi). Natijada foydalanuvchi "Qabul
+# qildim, ishlab chiqyapman..." xabaridan keyin ABADIY hech narsa
+# olmasdi -- xatolik ham, natija ham (foydalanuvchi buni skrinshot bilan
+# ko'rsatdi: Vercel logida 504 bor, lekin Telegram'da hech narsa yo'q).
+#
+# Yechim: fon ishi BOSHLANISHIDAN OLDIN chat_id KV'ga "kutilyapti" deb
+# belgilanadi (`mark_action_pending`), ishi TUGAGANDA (muvaffaqiyatli YOKI
+# except orqali ushlangan xato bilan) belgi OLIB TASHLANADI
+# (`clear_action_pending`). Alohida, tez-tez ishlaydigan cron
+# (`/api/cron/pending-check`) belgisi hali ham turgan (ya'ni process_action
+# hech qachon tugamagan -- SIGKILL bo'lgan) yozuvlarni topib, foydalanuvchiga
+# "bu buyruq vaqt tugashi sababli bekor bo'ldi" deb ALOHIDA xabar beradi --
+# shu orqali "bot hech narsa demadi" holati BUTUNLAY yo'qoladi, hatto
+# maxDuration limitiga urilib qolgan taqdirda ham.
+_PENDING_ACTIONS_KV_KEY = "pending_actions"
+_PENDING_ACTION_TIMEOUT_SECONDS = 90  # vercel.json maxDuration=300 dan kichikroq marj bilan
+
+
+def mark_action_pending(chat_id: int, user_text: str) -> None:
+    """Fon ishi (`/api/process-action`) yuborilishidan OLDIN chaqiriladi."""
+    pending = kv_store.get_json(_PENDING_ACTIONS_KV_KEY, default={})
+    pending[str(chat_id)] = {
+        "started_at": datetime.utcnow().isoformat(),
+        "user_text": (user_text or "")[:200],
+    }
+    kv_store.set_json(_PENDING_ACTIONS_KV_KEY, pending)
+
+
+def clear_action_pending(chat_id: int) -> None:
+    """Fon ishi TUGAGANDA (muvaffaqiyatli yoki except orqali ushlangan
+    xato bilan) chaqiriladi -- belgi endi kerak emas."""
+    pending = kv_store.get_json(_PENDING_ACTIONS_KV_KEY, default={})
+    if str(chat_id) in pending:
+        del pending[str(chat_id)]
+        kv_store.set_json(_PENDING_ACTIONS_KV_KEY, pending)
+
+
+def check_stale_pending_actions(timeout_seconds: int = _PENDING_ACTION_TIMEOUT_SECONDS) -> list[tuple[int, str]]:
+    """`/api/cron/pending-check` tomonidan tez-tez (masalan har 1-2 daqiqada)
+    chaqiriladi -- HECH QANDAY LLM chaqiruvisiz, faqat KV o'qish/yozish,
+    shuning uchun deyarli bepul va tez. `started_at`dan beri `timeout_seconds`
+    dan ko'p vaqt o'tgan (demak `process_action` hech qachon tugamagan --
+    Vercel tomonidan SIGKILL qilingan) yozuvlarni topib, ularni KV'dan olib
+    tashlaydi va `(chat_id, foydalanuvchiga_yuboriladigan_xabar)` ro'yxatini
+    qaytaradi."""
+    pending = kv_store.get_json(_PENDING_ACTIONS_KV_KEY, default={})
+    if not pending:
+        return []
+    now = datetime.utcnow()
+    stale: list[tuple[int, str]] = []
+    remaining = {}
+    for chat_id_str, info in pending.items():
+        started_raw = info.get("started_at") if isinstance(info, dict) else None
+        try:
+            started = datetime.fromisoformat(started_raw) if started_raw else None
+        except ValueError:
+            started = None
+        if started is None:
+            continue  # buzilgan yozuv -- e'tiborsiz qoldiramiz (o'chirib tashlanadi)
+        elapsed = (now - started).total_seconds()
+        if elapsed >= timeout_seconds:
+            user_text = (info.get("user_text") or "").strip() if isinstance(info, dict) else ""
+            text = (
+                "\u26a0\ufe0f Oldingi buyrug'ingizni bajarish juda uzoq davom etib, "
+                "server vaqti tugagani sababli BEKOR bo'ldi"
+                + (f":\n\u201c{user_text}\u201d" if user_text else ".")
+                + "\n\nIltimos, kichikroq/aniqroq qilib qaytadan yuboring (masalan bitta "
+                "kampaniya uchun alohida-alohida so'rang)."
+            )
+            try:
+                stale.append((int(chat_id_str), text))
+            except ValueError:
+                pass
+        else:
+            remaining[chat_id_str] = info
+    if len(remaining) != len(pending):
+        kv_store.set_json(_PENDING_ACTIONS_KV_KEY, remaining)
+    return stale
 
 
 def _current_tashkent_time() -> tuple[str, str]:

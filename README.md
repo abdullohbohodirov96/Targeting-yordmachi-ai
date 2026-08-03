@@ -252,10 +252,17 @@ endpoint Hobby rejada Vercel Cron orqali ISHLAMAYDI — tashqi cron xizmati kera
   FARQLI: hech qanday amal (pause/resume/byudjet) BAJARMAYDI, faqat hisobot,
   va FAQAT OpenAI orqali ishlaydi (Claude/Anthropic bu yerda umuman
   chaqirilmaydi — arzon).
+- **`/api/cron/pending-check`** — (MUHIM, bug fix) ACTION buyruqlari ba'zan
+  Vercel'ning `maxDuration` chegarasiga urilib to'xtab qoladi (504
+  FUNCTION_INVOCATION_TIMEOUT) — bu holatda foydalanuvchi "Qabul qildim,
+  ishlab chiqyapman..." xabaridan keyin hech narsa olmay qolardi. Bu endpoint
+  shuni aniqlab, foydalanuvchiga alohida "vaqt tugadi" xabarini yuboradi.
+  HECH QANDAY Meta API/LLM chaqiruvi qilmaydi (faqat KV o'qish/yozish) —
+  deyarli bepul, shuning uchun TEZ-TEZ (har 1-2 daqiqada) chaqirilishi kerak.
 
 Barchasini yoqish uchun:
 - **Tavsiya (bepul):** [cron-job.org](https://cron-job.org)da ro'yxatdan o'ting va
-  uchta alohida "cron job" yarating:
+  to'rtta alohida "cron job" yarating:
   - `https://<domeningiz>.vercel.app/api/cron/budget?secret=<CRON_SECRET>` — har 4 soatda
   - `https://<domeningiz>.vercel.app/api/cron/watch?secret=<CRON_SECRET>` — har 30-60
     daqiqada (tavsiya). Bundan tez-tez (masalan har 1-5 daqiqada) chaqirish ham mumkin,
@@ -266,6 +273,9 @@ Barchasini yoqish uchun:
     har kuni bir marta, soat **04:00 UTC** (= 09:00 O'zbekiston vaqti, UTC+5) qilib
     sozlang. Bu FAQAT OpenAI ishlatadi, shuning uchun tez-tez chaqirsangiz ham
     (masalan yana kunning boshqa vaqtida) katta xarajat qilmaydi.
+  - `https://<domeningiz>.vercel.app/api/cron/pending-check?secret=<CRON_SECRET>` —
+    har 1-2 daqiqada. Hech qanday pulli chaqiruv qilmaydi, shuning uchun bu
+    chastotada ham xarajat qilmaydi.
 - **Yoki:** Vercel **Pro** rejaga o'ting — shunda `vercel.json`ga
   `{"path": "/api/cron/watch", "schedule": "*/30 * * * *"}` va
   `{"path": "/api/cron/admin-report", "schedule": "0 4 * * *"}` (va xohlasangiz

@@ -711,21 +711,25 @@ def _finish_pipeline(targetolog_plan: dict, dry_run: bool = False) -> tuple[str,
     report_lines = [targetolog_plan.get("summary", "").strip()]
 
     if succeeded:
-        # MUHIM (foydalanuvchi so'ragan aniqlik): faqat "N ta o'zgarish
-        # qildim" deb sonini aytish YETARLI EMAS -- foydalanuvchi ANIQ QAYSI
-        # target(lar)ga NIMA qilinganini guruhda ko'rishni so'radi ("target
-        # oshib ketvotkan bolsa ... guruhga tog'rilangan qilingan
-        # narsalarni yozsin"). Shuning uchun endi har bir muvaffaqiyatli
-        # action alohida qatorda, target nomi + oddiy tildagi amal bilan
-        # ko'rsatiladi.
+        # MUHIM (foydalanuvchi so'ragan aniqlik, KEYIN qisqartirilgan): avval
+        # bu yerda har bir action'ning TO'LIQ, xom `reason` maydoni ham
+        # qo'shib yuborilgan edi -- lekin `reason` audit/texnik maqsad uchun
+        # (action_schema.md: "bu foydalanuvchiga ko'rsatilmasligi ham
+        # mumkin"), ko'pincha bir necha jumlali texnik tushuntirish bo'ladi
+        # (masalan "targeting_automation.advantage_audience=1 bo'lganligi
+        # sababli..."). Buni Telegram xabariga xom holda qo'shish natijada
+        # o'ta uzun, texnik xabar berardi -- foydalanuvchi buni skrinshot
+        # bilan ko'rsatib, "qisqa va aniq, ma'nosini yo'qotmasdan" deb
+        # so'radi. Endi faqat target nomi + oddiy tildagi qisqa fe'l
+        # ko'rsatiladi ("nima qilindi" yetarli) -- "nega" degan texnik
+        # asos endi faqat `summary`da (Targetolog o'zi 2-3 gapda, oddiy
+        # tilda beradi) va server logidagi run_*.json faylida qoladi.
         report_lines.append(f"\n✅ {len(succeeded)} ta o'zgarish qildim:")
         for s in succeeded[:10]:
             action = s["action"]
             name = action.get("object_name", action.get("object_id", "?"))
             verb = _ACTION_FRIENDLY_VERB.get(action["type"], action["type"])
-            reason = (action.get("reason") or "").strip()
-            reason_part = f" — {reason}" if reason else ""
-            report_lines.append(f"   🔧 {name}: {verb}{reason_part}")
+            report_lines.append(f"   🔧 {name}: {verb}")
         if len(succeeded) > 10:
             report_lines.append(f"   ...va yana {len(succeeded) - 10} tasi.")
     if failed:

@@ -179,6 +179,21 @@ Telegram'da yozilgan qisqa xabar, texnik hisobot EMAS:**
 - Batafsil texnik asos (raqamlar, sabab) kerak bo'lsa, uni har bir
   action'ning `reason` maydoniga yozing (bu foydalanuvchiga ko'rsatilmasligi
   ham mumkin, faqat audit uchun) — `summary`ni har doim ODDIY va QISQA saqlang.
+- **MUHIM (bir nechta action bo'lganda ham amal qiladi):** Agar bir vaqtda
+  bir nechta action taklif qilsangiz (masalan 2-3 ta adset'ning
+  auditoriyasini o'zgartirish + bitta kampaniyani ishga tushirish),
+  `summary`da HAR BIRINI alohida-alohida TEXNIK tarzda tushuntirmang
+  (masalan "Adset faqat Toshkent shahrida ishlayapti va 10 ta shahar
+  exclude qilingan... Advantage+ Audience funksiyasi faol bo'lgani uchun
+  algoritm o'zi eng yaxshi joylarni topadi" kabi ICHKI MEXANIZM tafsilotlari
+  — bular HAR QACHON `reason`ga, summary'ga EMAS). `summary` baribir
+  UMUMIY 2-3 gapdan oshmasligi kerak — masalan: "2 ta reklamaning
+  auditoriyasini kengaytirdim, 1 ta pauzadagi reklamani ishga tushirdim —
+  ko'proq odamga ko'rinib, ko'proq mijoz kelishi kutilmoqda." Qaysi target
+  nima bo'lganini (nomi + qisqa fe'l) allaqachon alohida ro'yxatda
+  ko'rsatiladi (orchestrator tomonidan, summary'dan KEYIN) — shuning uchun
+  `summary`da buni takrorlab, har birini nomma-nom tushuntirib o'tirishning
+  hojati yo'q.
 - Javob token limitidan oshib JSON o'rtada kesilib qolmasligi uchun ham
   qisqalik MUHIM.
 
